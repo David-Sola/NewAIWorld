@@ -36,9 +36,9 @@
       particleCount: 3500,        // Total number of particles.
       autoZoom: false,            // Auto zoom disabled.
       zoomSpeed: 0,               // Zoom speed is 0.
-      expansionDuration: 0.95,     // Seconds until expansion stops.
+      expansionDuration: 0.95,    // Seconds until expansion stops.
       starRotationSpeed: 0.05,    // Rotation speed (radians per second) after expansion.
-      backgroundURL: "D:\Projekte\o3-Mini\NewAIWorld\big_bang\BackgroundEnhanced.jpg", // Background image URL.
+      backgroundURL: "D:\\Projekte\\o3-Mini\\NewAIWorld\\big_bang\\BackgroundEnhanced.jpg", // Background image URL.
       starIntensity: 10.0,        // Multiplier for star brightness.
       hoverThreshold: 1000,       // Hover threshold in screen pixels.
       starSize: 2,                // Initial star size (in pixels).
@@ -52,7 +52,7 @@
     const innerRadius = 4;
     const depth = 1;
 
-    // Global logo colors.
+    // Global logo colors (used by the Google ring segments).
     const red    = 0xEA4335;
     const blue   = 0x4285F4;
     const yellow = 0xFBBC05;
@@ -65,7 +65,7 @@
     let particleSystem, particleGeometry;
     let velocities;  // Array of velocities for each star.
     let clock, gui;
-    let googleLogoGroup, openaiLogoGroup;
+    let googleLogoGroup, openaiLogoGroup, xStackedGroup, bgStackedGroup;
     let currentHoveredIndex = -1;  // Index of the currently hovered star.
     const mouse = new THREE.Vector2();  // Global mouse coordinates (in NDC).
 
@@ -152,6 +152,16 @@
       openaiLogoGroup.position.set(3, -3, -3);
       scene.add(openaiLogoGroup);
 
+      // NEW: The stacked X logo with black removed.
+      xStackedGroup = createXStackedLogo();
+      xStackedGroup.position.set(0, 0, 0);  // adjust if you want
+      scene.add(xStackedGroup);
+
+      // Our stacked BG planes for a pseudo-3D effect
+      bgStackedGroup = createBGStackedLogo();
+      bgStackedGroup.position.set(-3, -3, 5);  // tweak position
+      scene.add(bgStackedGroup);
+
       // dat.GUI.
       gui = new GUI();
       gui.add(params, 'expansionSpeed', 0, 200).name("Expansion Speed");
@@ -187,17 +197,18 @@
         const r = Math.random() * 0.5;
         const theta = Math.random() * 2 * Math.PI;
         const phi = Math.acos((Math.random() * 2) - 1);
-        positions[index] = r * Math.sin(phi) * Math.cos(theta);
+
+        positions[index]     = r * Math.sin(phi) * Math.cos(theta);
         positions[index + 1] = r * Math.sin(phi) * Math.sin(theta);
         positions[index + 2] = r * Math.cos(phi);
 
         const speed = Math.random() * 0.5 + 0.5;
-        velocities[index] = speed * Math.sin(phi) * Math.cos(theta);
+        velocities[index]     = speed * Math.sin(phi) * Math.cos(theta);
         velocities[index + 1] = speed * Math.sin(phi) * Math.sin(theta);
         velocities[index + 2] = speed * Math.cos(phi);
 
         // Set default color (multiplied by intensity) and size.
-        colors[index] = defaultStarColor.r * params.starIntensity;
+        colors[index]     = defaultStarColor.r * params.starIntensity;
         colors[index + 1] = defaultStarColor.g * params.starIntensity;
         colors[index + 2] = defaultStarColor.b * params.starIntensity;
         sizes[i] = params.starSize;
@@ -244,25 +255,28 @@
     /**********************************************************************
      * Custom Hover Effect: Update Colors and Sizes of Stars
      **********************************************************************/
-    // Manually project each star to screen space and check if it is within the threshold.
     function checkHover() {
       let closestIndex = -1;
       let minDistance = Infinity;
       const positions = particleGeometry.attributes.position.array;
       const vector = new THREE.Vector3();
       const threshold = params.hoverThreshold;
+
       for (let i = 0; i < params.particleCount; i++) {
         const index = i * 3;
         vector.set(positions[index], positions[index + 1], positions[index + 2]);
         particleSystem.localToWorld(vector);
         vector.project(camera);
+
         const screenX = (vector.x * 0.5 + 0.5) * window.innerWidth;
         const screenY = (-vector.y * 0.5 + 0.5) * window.innerHeight;
         const mouseX = (mouse.x * 0.5 + 0.5) * window.innerWidth;
         const mouseY = (-mouse.y * 0.5 + 0.5) * window.innerHeight;
+
         const dx = screenX - mouseX;
         const dy = screenY - mouseY;
         const distance = Math.sqrt(dx * dx + dy * dy);
+
         if (distance < threshold && distance < minDistance) {
           minDistance = distance;
           closestIndex = i;
@@ -271,20 +285,20 @@
       return closestIndex;
     }
 
-    // Update the aColor and aSize attributes.
     function updateStarAttributes(hoveredIndex) {
       const colors = particleGeometry.attributes.aColor.array;
-      const sizes = particleGeometry.attributes.aSize.array;
+      const sizes  = particleGeometry.attributes.aSize.array;
+
       for (let i = 0; i < params.particleCount; i++) {
         let baseColor, baseSize;
         if (i === hoveredIndex) {
           baseColor = hoverStarColor.clone().multiplyScalar(params.starIntensity);
-          baseSize = params.hoverStarSize;
+          baseSize  = params.hoverStarSize;
         } else {
           baseColor = defaultStarColor.clone().multiplyScalar(params.starIntensity);
-          baseSize = params.starSize;
+          baseSize  = params.starSize;
         }
-        colors[i * 3] = baseColor.r;
+        colors[i * 3 + 0] = baseColor.r;
         colors[i * 3 + 1] = baseColor.g;
         colors[i * 3 + 2] = baseColor.b;
         sizes[i] = baseSize;
@@ -303,6 +317,7 @@
       shape.lineTo(innerRadius * Math.cos(endAngle), innerRadius * Math.sin(endAngle));
       shape.absarc(0, 0, innerRadius, endAngle, startAngle, true);
       shape.lineTo(outerRadius * Math.cos(startAngle), outerRadius * Math.sin(startAngle));
+
       const extrudeSettings = { depth: depth, bevelEnabled: false };
       const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
       return new THREE.Mesh(geometry, material);
@@ -316,6 +331,7 @@
       shape.lineTo(outerRadius, -2);
       shape.lineTo(1, -2);
       shape.lineTo(1, -0.5);
+
       const extrudeSettings = { depth: depth, bevelEnabled: false };
       const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
       return new THREE.Mesh(geometry, material);
@@ -343,43 +359,176 @@
     function createOpenAILogo() {
       const group = new THREE.Group();
       const openaiColor = 0x333333;
+
       const shape = new THREE.Shape();
       const numPoints = 64;
       const baseRadius = 5;
+
       for (let i = 0; i < numPoints; i++) {
-        let angle = (i / numPoints) * Math.PI * 2;
-        let modulation = 0.5 * Math.sin(6 * angle);
-        let r = baseRadius + modulation;
-        let x = r * Math.cos(angle);
-        let y = r * Math.sin(angle);
-        if (i === 0) {
-          shape.moveTo(x, y);
-        } else {
-          shape.lineTo(x, y);
-        }
+        const angle = (i / numPoints) * Math.PI * 2;
+        const modulation = 0.5 * Math.sin(6 * angle);
+        const r = baseRadius + modulation;
+        const x = r * Math.cos(angle);
+        const y = r * Math.sin(angle);
+        if (i === 0) shape.moveTo(x, y);
+        else shape.lineTo(x, y);
       }
       shape.closePath();
+
+      // Inner hole
       const hole = new THREE.Path();
       const innerRadiusOpenAI = 3.5;
       const numHolePoints = 64;
       for (let i = 0; i < numHolePoints; i++) {
-        let angle = (i / numHolePoints) * Math.PI * 2;
-        let x = innerRadiusOpenAI * Math.cos(angle);
-        let y = innerRadiusOpenAI * Math.sin(angle);
-        if (i === 0) {
-          hole.moveTo(x, y);
-        } else {
-          hole.lineTo(x, y);
-        }
+        const angle = (i / numHolePoints) * Math.PI * 2;
+        const x = innerRadiusOpenAI * Math.cos(angle);
+        const y = innerRadiusOpenAI * Math.sin(angle);
+        if (i === 0) hole.moveTo(x, y);
+        else hole.lineTo(x, y);
       }
       hole.closePath();
       shape.holes.push(hole);
+
       const extrudeSettings = { depth: 1, bevelEnabled: false };
       const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
       const material = new THREE.MeshPhongMaterial({ color: openaiColor, side: THREE.DoubleSide });
       const mesh = new THREE.Mesh(geometry, material);
       group.add(mesh);
+
       group.name = "openaiLogo";
+      return group;
+    }
+
+    /**********************************************************************
+     * X Logo: stacked planes that remove black via a custom shader
+     **********************************************************************/
+    function createXStackedLogo() {
+      const group = new THREE.Group();
+      const loader = new THREE.TextureLoader();
+
+      // 1) The custom shaders that cut out black.
+      //    We pass in colorToRemove = (0,0,0) and do a threshold check.
+      const xVertexShader = `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `;
+
+      const xFragmentShader = `
+        uniform sampler2D map;
+        uniform vec3 colorToRemove;
+        uniform float threshold;
+        varying vec2 vUv;
+        void main() {
+          vec4 texColor = texture2D(map, vUv);
+          // measure distance from black
+          float dist = distance(texColor.rgb, colorToRemove);
+          // if we're within threshold, discard (fully transparent)
+          if(dist < threshold) discard;
+          // else keep the pixel
+          gl_FragColor = texColor;
+        }
+      `;
+
+      // 2) Load the raw X image (with black background).
+      loader.load(
+        "X_logo.png",           // replace with actual path/URL
+        (texture) => {
+          // We'll create multiple stacked planes, just like the BG effect.
+          // Adjust these to control layers, spacing, scale, etc.
+          const numPlanes = 35;
+          const zSpacing = 0.003;
+          const baseSize = 3;  // plane size
+          const scaleStep = 0.0;
+          const alphaStep = 0.0;
+
+          for (let i = 0; i < numPlanes; i++) {
+            // The geometry
+            const planeGeom = new THREE.PlaneGeometry(baseSize, baseSize);
+
+            // We'll create a ShaderMaterial that discards black pixels.
+            const xUniforms = {
+              map: { value: texture },
+              colorToRemove: { value: new THREE.Color(0x000000) },
+              threshold: { value: 0.9 } // tweak if some black remains or edges get cut
+            };
+
+            const planeMat = new THREE.ShaderMaterial({
+              uniforms: xUniforms,
+              vertexShader: xVertexShader,
+              fragmentShader: xFragmentShader,
+              transparent: true,
+              side: THREE.DoubleSide
+            });
+
+            const plane = new THREE.Mesh(planeGeom, planeMat);
+            plane.name = "xPlane_" + i;
+
+            // scale up each subsequent plane slightly if desired
+            const scaleFactor = 1 + i * scaleStep;
+            plane.scale.set(scaleFactor, scaleFactor, 1);
+
+            // move each plane behind the previous
+            plane.position.z = -i * zSpacing;
+
+            group.add(plane);
+          }
+        },
+        undefined,
+        (err) => {
+          console.error("Error loading X image:", err);
+        }
+      );
+
+      group.name = "xStacked";
+      return group;
+    }
+
+    /**********************************************************************
+     * BG Neon: Stacked planes for a 3D effect
+     **********************************************************************/
+    function createBGStackedLogo() {
+      const group = new THREE.Group();
+      const loader = new THREE.TextureLoader();
+
+      // REPLACE "BG_neon.jpg" with an actual path/URL to your image:
+      loader.load(
+        "BG_neon.jpg",
+        (texture) => {
+          // Adjust these to control how many planes, spacing, scale, etc.
+          const numPlanes = 30;
+          const zSpacing = 0.01;
+          const baseSize = 3;
+          const scaleStep = 0.0;
+          const alphaStep = 0.0;
+
+          for (let i = 0; i < numPlanes; i++) {
+            const planeGeom = new THREE.PlaneGeometry(baseSize, baseSize);
+
+            const opacity = 0.1 - i * alphaStep;
+            const planeMat = new THREE.MeshPhongMaterial({
+              map: texture,
+              side: THREE.DoubleSide,
+              transparent: true,
+              opacity: opacity
+            });
+
+            const plane = new THREE.Mesh(planeGeom, planeMat);
+            plane.name = "bgPlane_" + i;
+            plane.position.z = -i * zSpacing;
+
+            group.add(plane);
+          }
+        },
+        undefined,
+        (err) => {
+          console.error("Error loading BG image:", err);
+        }
+      );
+
+      group.name = "bgStacked";
       return group;
     }
 
@@ -412,12 +561,38 @@
       event.preventDefault();
       const raycasterLogos = new THREE.Raycaster();
       raycasterLogos.setFromCamera(mouse, camera);
+
+      // Check Google
       const intersectsGoogle = raycasterLogos.intersectObjects(googleLogoGroup.children, true);
-      const intersectsOpenAI = raycasterLogos.intersectObjects(openaiLogoGroup.children, true);
       if (intersectsGoogle.length > 0) {
         window.open("https://www.google.com", "_blank");
-      } else if (intersectsOpenAI.length > 0) {
+        return;
+      }
+
+      // Check OpenAI
+      const intersectsOpenAI = raycasterLogos.intersectObjects(openaiLogoGroup.children, true);
+      if (intersectsOpenAI.length > 0) {
         window.open("https://www.openai.com", "_blank");
+        return;
+      }
+
+      // Check X (the stacked planes)
+      if (xStackedGroup) {
+        const intersectsX = raycasterLogos.intersectObjects(xStackedGroup.children, true);
+        if (intersectsX.length > 0) {
+          window.open("https://x.com", "_blank");
+          return;
+        }
+      }
+
+      // Check BG stacked planes
+      if (bgStackedGroup) {
+        const intersectsBG = raycasterLogos.intersectObjects(bgStackedGroup.children, true);
+        if (intersectsBG.length > 0) {
+          // Replace with any link or action you want
+          window.open("https://example.com/bg-neon", "_blank");
+          return;
+        }
       }
     }
 
@@ -443,25 +618,30 @@
         const positions = particleGeometry.attributes.position.array;
         for (let i = 0; i < params.particleCount; i++) {
           const index = i * 3;
-          positions[index]     += velocities[index] * params.expansionSpeed * delta;
+          positions[index]     += velocities[index]     * params.expansionSpeed * delta;
           positions[index + 1] += velocities[index + 1] * params.expansionSpeed * delta;
           positions[index + 2] += velocities[index + 2] * params.expansionSpeed * delta;
         }
         particleGeometry.attributes.position.needsUpdate = true;
       } else {
+        // Once expansion stops, we rotate the particle system slowly.
         particleSystem.rotation.y += params.starRotationSpeed * delta;
       }
 
-      // Custom hover effect.
+      // Custom hover effect (for the stars).
       const hoveredIndex = checkHover();
       updateStarAttributes(hoveredIndex);
 
+      // Auto Zoom
       if (params.autoZoom) {
         camera.position.z += params.zoomSpeed * delta;
       }
 
-      if (googleLogoGroup) { googleLogoGroup.rotation.y += 0.01; }
-      if (openaiLogoGroup) { openaiLogoGroup.rotation.y += 0.01; }
+      // Rotate the logos slowly
+      if (googleLogoGroup) googleLogoGroup.rotation.y += 0.01;
+      if (openaiLogoGroup) openaiLogoGroup.rotation.y += 0.01;
+      if (xStackedGroup)  xStackedGroup.rotation.y  += 0.01;  // spin the stacked X
+      if (bgStackedGroup) bgStackedGroup.rotation.y += 0.005;
 
       controls.update();
       composer.render();
