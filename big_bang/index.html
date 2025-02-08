@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Big Bang Simulation with Constellations & Logos</title>
+  <title>Big Bang Simulation with Adjustable Star Size & Hover Effect</title>
   <style>
-    /* Make the canvas fill the window */
+    /* Ensure the canvas fills the window */
     body { margin: 0; overflow: hidden; background-color: #000; }
     canvas { display: block; }
   </style>
-  <!-- Import map: Maps the bare specifier "three" to its full URL -->
+  <!-- Import map to resolve "three" -->
   <script type="importmap">
   {
     "imports": {
@@ -20,149 +20,211 @@
 <body>
   <!-- Run this via a local server -->
   <script type="module">
-    // Import Three.js and example modules.
+    // Import Three.js and supporting modules.
     import * as THREE from 'three';
     import { OrbitControls } from 'https://unpkg.com/three@0.128.0/examples/jsm/controls/OrbitControls.js';
     import { EffectComposer } from 'https://unpkg.com/three@0.128.0/examples/jsm/postprocessing/EffectComposer.js';
     import { RenderPass } from 'https://unpkg.com/three@0.128.0/examples/jsm/postprocessing/RenderPass.js';
     import { UnrealBloomPass } from 'https://unpkg.com/three@0.128.0/examples/jsm/postprocessing/UnrealBloomPass.js';
     import { GUI } from 'https://unpkg.com/dat.gui@0.7.7/build/dat.gui.module.js';
-    
+
     /**********************************************************************
-     * Global Variables & Simulation Parameters
+     * Simulation Parameters – adjustable via dat.GUI.
+     **********************************************************************/
+    const params = {
+      expansionSpeed: 50.0,       // Particle expansion speed.
+      particleCount: 3500,        // Total number of particles.
+      autoZoom: false,            // Auto zoom disabled.
+      zoomSpeed: 0,               // Zoom speed is 0.
+      expansionDuration: 0.95,     // Seconds until expansion stops.
+      starRotationSpeed: 0.05,    // Rotation speed (radians per second) after expansion.
+      backgroundURL: "D:\Projekte\o3-Mini\NewAIWorld\big_bang\BackgroundEnhanced.jpg", // Background image URL.
+      starIntensity: 10.0,        // Multiplier for star brightness.
+      hoverThreshold: 1000,       // Hover threshold in screen pixels.
+      starSize: 2,                // Initial star size (in pixels).
+      hoverStarSize: 4            // Star size when hovered (doubled).
+    };
+
+    /**********************************************************************
+     * Global Constants for Logo Construction
+     **********************************************************************/
+    const outerRadius = 5;
+    const innerRadius = 4;
+    const depth = 1;
+
+    // Global logo colors.
+    const red    = 0xEA4335;
+    const blue   = 0x4285F4;
+    const yellow = 0xFBBC05;
+    const green  = 0x34A853;
+
+    /**********************************************************************
+     * Global Variables
      **********************************************************************/
     let scene, camera, renderer, controls, composer;
-    let particleSystem, particleGeometry, particleMaterial;
-    let velocities; // Particle velocities for the Big Bang simulation
+    let particleSystem, particleGeometry;
+    let velocities;  // Array of velocities for each star.
     let clock, gui;
-    
-    // References for the logos.
     let googleLogoGroup, openaiLogoGroup;
-    
-    // Big Bang simulation parameters.
-    const params = {
-      expansionSpeed: 50.0,  // How fast particles expand outward.
-      particleCount: 20000,  // Total number of particles.
-      autoZoom: true,        // Whether the camera automatically zooms out.
-      zoomSpeed: 0.0         // Speed of camera zoom (units per second).
-    };
-    
+    let currentHoveredIndex = -1;  // Index of the currently hovered star.
+    const mouse = new THREE.Vector2();  // Global mouse coordinates (in NDC).
+
+    // Default star colors.
+    const defaultStarColor = new THREE.Color(0.3, 0.3, 0.3);
+    const hoverStarColor   = new THREE.Color(1, 1, 1);
+
+    /**********************************************************************
+     * Shaders for Custom Points Material
+     **********************************************************************/
+    const vertexShader = `
+      attribute float aSize;
+      attribute vec3 aColor;
+      varying vec3 vColor;
+      void main() {
+        vColor = aColor;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        gl_PointSize = aSize;
+      }
+    `;
+
+    const fragmentShader = `
+      uniform sampler2D pointTexture;
+      varying vec3 vColor;
+      void main() {
+        vec4 texColor = texture2D(pointTexture, gl_PointCoord);
+        gl_FragColor = vec4(vColor, 1.0) * texColor;
+      }
+    `;
+
     /**********************************************************************
      * Initialization: Scene, Camera, Renderer, Lights, Controls & Effects
      **********************************************************************/
     function init() {
-      // Create the scene with a black background and subtle fog.
+      // Create the scene.
       scene = new THREE.Scene();
       scene.background = new THREE.Color(0x000000);
       scene.fog = new THREE.FogExp2(0x000000, 0.00015);
-      
-      // Set up a perspective camera.
+
+      // Set up the camera.
       camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 10000);
       camera.position.set(0, 0, 50);
-      
-      // Create the WebGL renderer.
+
+      // Set up the renderer.
       renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.shadowMap.enabled = true;
       document.body.appendChild(renderer.domElement);
-      
-      // Enable OrbitControls so you can zoom/orbit the scene.
+
+      // OrbitControls.
       controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
       controls.dampingFactor = 0.05;
-      
-      // Add some ambient and directional lighting.
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
-      scene.add(ambientLight);
+
+      // Lights.
+      scene.add(new THREE.AmbientLight(0xffffff, 0.2));
       const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
       directionalLight.position.set(50, 50, 50);
       directionalLight.castShadow = true;
-      directionalLight.shadow.mapSize.width = 1024;
-      directionalLight.shadow.mapSize.height = 1024;
+      directionalLight.shadow.mapSize.set(1024, 1024);
       scene.add(directionalLight);
-      
-      // Create a clock to track time.
+
+      // Clock.
       clock = new THREE.Clock();
-      
-      // Build the Big Bang particle system.
+
+      // Build the particle system.
       createParticleSystem();
-      
-      // Set up postprocessing with a bloom (glow) effect.
+
+      // Postprocessing (bloom effect).
       composer = new EffectComposer(renderer);
-      const renderPass = new RenderPass(scene, camera);
-      composer.addPass(renderPass);
+      composer.addPass(new RenderPass(scene, camera));
       const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
       composer.addPass(bloomPass);
-      
-      // Create the constellation overlay.
-      createConstellations();
-      
-      // Create the two logos and add them to the scene.
+
+      // Create logos.
       googleLogoGroup = createGoogleLogo();
-      // Scale down and position Google logo.
       googleLogoGroup.scale.set(0.3, 0.3, 0.3);
-      googleLogoGroup.position.set(-4, 0, 0);
+      googleLogoGroup.position.set(-3, 3, 3);
       scene.add(googleLogoGroup);
-      
+
       openaiLogoGroup = createOpenAILogo();
-      // Scale down and position OpenAI logo.
       openaiLogoGroup.scale.set(0.3, 0.3, 0.3);
-      openaiLogoGroup.position.set(4, 0, 0);
+      openaiLogoGroup.position.set(3, -3, -3);
       scene.add(openaiLogoGroup);
-      
-      // Initialize dat.GUI controls.
+
+      // dat.GUI.
       gui = new GUI();
       gui.add(params, 'expansionSpeed', 0, 200).name("Expansion Speed");
+      gui.add(params, 'expansionDuration', 0, 60).name("Expansion Duration (s)");
+      gui.add(params, 'starRotationSpeed', 0, 0.2).name("Star Rotation Speed");
+      gui.add(params, 'starIntensity', 0, 100).name("Star Intensity");
+      gui.add(params, 'hoverThreshold', 1, 2000).name("Hover Threshold (px)");
+      gui.add(params, 'starSize', 0, 20).name("Initial Star Size");
+      gui.add(params, 'hoverStarSize', 0, 40).name("Hover Star Size");
       gui.add(params, 'autoZoom').name("Auto Zoom");
       gui.add(params, 'zoomSpeed', 0, 20).name("Zoom Speed");
-      
-      // Adjust on window resize.
+      gui.add(params, 'backgroundURL').name("Background URL").onFinishChange(loadBackgroundImage);
+
+      // Event listeners.
       window.addEventListener('resize', onWindowResize, false);
-      // Set up click detection for both logos.
       renderer.domElement.addEventListener('click', onDocumentClick, false);
+      renderer.domElement.addEventListener('mousemove', onDocumentMouseMove, false);
     }
-    
+
     /**********************************************************************
-     * Create the Big Bang Particle System
+     * Create the Particle System with Custom Shader Material
      **********************************************************************/
     function createParticleSystem() {
       particleGeometry = new THREE.BufferGeometry();
       const positions = new Float32Array(params.particleCount * 3);
+      const colors = new Float32Array(params.particleCount * 3);
+      const sizes = new Float32Array(params.particleCount);
       velocities = new Float32Array(params.particleCount * 3);
-      
-      // Initialize each particle near the origin with a random velocity.
+
+      // Initialize positions, velocities, colors, and sizes.
       for (let i = 0; i < params.particleCount; i++) {
         const index = i * 3;
-        const r = Math.random() * 0.5;  // Starting near the singularity.
+        const r = Math.random() * 0.5;
         const theta = Math.random() * 2 * Math.PI;
         const phi = Math.acos((Math.random() * 2) - 1);
-        positions[index]     = r * Math.sin(phi) * Math.cos(theta);
+        positions[index] = r * Math.sin(phi) * Math.cos(theta);
         positions[index + 1] = r * Math.sin(phi) * Math.sin(theta);
         positions[index + 2] = r * Math.cos(phi);
-        
+
         const speed = Math.random() * 0.5 + 0.5;
-        velocities[index]     = speed * Math.sin(phi) * Math.cos(theta);
+        velocities[index] = speed * Math.sin(phi) * Math.cos(theta);
         velocities[index + 1] = speed * Math.sin(phi) * Math.sin(theta);
         velocities[index + 2] = speed * Math.cos(phi);
+
+        // Set default color (multiplied by intensity) and size.
+        colors[index] = defaultStarColor.r * params.starIntensity;
+        colors[index + 1] = defaultStarColor.g * params.starIntensity;
+        colors[index + 2] = defaultStarColor.b * params.starIntensity;
+        sizes[i] = params.starSize;
       }
+
       particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      
-      // Create a custom glowing texture for particles.
-      const particleTexture = createParticleTexture();
-      particleMaterial = new THREE.PointsMaterial({
-        size: 2,
-        map: particleTexture,
-        blending: THREE.AdditiveBlending,
-        depthTest: false,
+      particleGeometry.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
+      particleGeometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+
+      const texture = createParticleTexture();
+
+      const shaderMaterial = new THREE.ShaderMaterial({
+        uniforms: { pointTexture: { value: texture } },
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
         transparent: true,
-        opacity: 0.8
+        depthTest: false,
+        blending: THREE.AdditiveBlending
       });
-      
-      particleSystem = new THREE.Points(particleGeometry, particleMaterial);
+
+      particleSystem = new THREE.Points(particleGeometry, shaderMaterial);
       scene.add(particleSystem);
     }
-    
-    // Create an offscreen canvas texture for glowing particles.
+
+    /**********************************************************************
+     * Create a Glowing Particle Texture
+     **********************************************************************/
     function createParticleTexture() {
       const size = 64;
       const canvas = document.createElement('canvas');
@@ -170,147 +232,85 @@
       canvas.height = size;
       const context = canvas.getContext('2d');
       const gradient = context.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-      gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
-      gradient.addColorStop(0.2, 'rgba(255, 255, 255, 1)');
-      gradient.addColorStop(0.4, 'rgba(128, 128, 255, 0.6)');
-      gradient.addColorStop(1, 'rgba(0, 0, 128, 0)');
+      gradient.addColorStop(0, 'rgba(255,255,255,1)');
+      gradient.addColorStop(0.2, 'rgba(255,255,255,1)');
+      gradient.addColorStop(0.4, 'rgba(128,128,255,0.6)');
+      gradient.addColorStop(1, 'rgba(0,0,128,0)');
       context.fillStyle = gradient;
       context.fillRect(0, 0, size, size);
       return new THREE.CanvasTexture(canvas);
     }
-    
+
     /**********************************************************************
-     * Create Constellation Overlay
+     * Custom Hover Effect: Update Colors and Sizes of Stars
      **********************************************************************/
-    function createConstellations() {
-      const constellationGroup = new THREE.Group();
-      const constellationsRadius = 3000;  // Fixed celestial sphere radius.
-      const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, opacity: 0.7, transparent: true });
-      
-      // Sample dataset for three constellations.
-      const constellationsData = [
-        {
-          name: 'Orion',
-          stars: {
-            Betelgeuse: { ra: 88.7929, dec: 7.4071 },
-            Bellatrix:  { ra: 81.2828, dec: 6.3497 },
-            Mintaka:    { ra: 83.0017, dec: -0.2991 },
-            Alnilam:    { ra: 84.0533, dec: -1.2019 },
-            Alnitak:    { ra: 85.1897, dec: -1.9426 },
-            Saiph:      { ra: 86.9391, dec: -9.6696 },
-            Rigel:      { ra: 78.6345, dec: -8.2016 }
-          },
-          lines: [
-            ["Betelgeuse", "Bellatrix"],
-            ["Bellatrix", "Mintaka"],
-            ["Mintaka", "Alnilam"],
-            ["Alnilam", "Alnitak"],
-            ["Alnitak", "Saiph"],
-            ["Saiph", "Rigel"],
-            ["Rigel", "Betelgeuse"]
-          ]
-        },
-        {
-          name: 'Ursa Major',
-          stars: {
-            Dubhe:   { ra: 165.932, dec: 61.751 },
-            Merak:   { ra: 165.460, dec: 56.382 },
-            Phecda:  { ra: 168.527, dec: 53.694 },
-            Megrez:  { ra: 175.257, dec: 54.925 },
-            Alioth:  { ra: 193.507, dec: 55.959 },
-            Mizar:   { ra: 200.981, dec: 54.925 },
-            Alkaid:  { ra: 206.885, dec: 49.313 }
-          },
-          lines: [
-            ["Dubhe", "Merak"],
-            ["Merak", "Phecda"],
-            ["Phecda", "Megrez"],
-            ["Megrez", "Alioth"],
-            ["Alioth", "Mizar"],
-            ["Mizar", "Alkaid"]
-          ]
-        },
-        {
-          name: 'Cassiopeia',
-          stars: {
-            Schedar: { ra: 10.126, dec: 56.537 },
-            Caph:    { ra: 2.293,  dec: 59.149 },
-            Ruchbah: { ra: 16.520, dec: 60.235 },
-            Segin:   { ra: 21.123, dec: 63.123 }
-          },
-          lines: [
-            ["Caph", "Schedar"],
-            ["Schedar", "Ruchbah"],
-            ["Ruchbah", "Segin"]
-          ]
+    // Manually project each star to screen space and check if it is within the threshold.
+    function checkHover() {
+      let closestIndex = -1;
+      let minDistance = Infinity;
+      const positions = particleGeometry.attributes.position.array;
+      const vector = new THREE.Vector3();
+      const threshold = params.hoverThreshold;
+      for (let i = 0; i < params.particleCount; i++) {
+        const index = i * 3;
+        vector.set(positions[index], positions[index + 1], positions[index + 2]);
+        particleSystem.localToWorld(vector);
+        vector.project(camera);
+        const screenX = (vector.x * 0.5 + 0.5) * window.innerWidth;
+        const screenY = (-vector.y * 0.5 + 0.5) * window.innerHeight;
+        const mouseX = (mouse.x * 0.5 + 0.5) * window.innerWidth;
+        const mouseY = (-mouse.y * 0.5 + 0.5) * window.innerHeight;
+        const dx = screenX - mouseX;
+        const dy = screenY - mouseY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < threshold && distance < minDistance) {
+          minDistance = distance;
+          closestIndex = i;
         }
-      ];
-      
-      // Helper: Convert (RA, dec) in degrees to Cartesian coordinates.
-      function sphericalToCartesian(ra, dec, r) {
-        const raRad = THREE.MathUtils.degToRad(ra);
-        const decRad = THREE.MathUtils.degToRad(dec);
-        const x = r * Math.cos(decRad) * Math.cos(raRad);
-        const y = r * Math.cos(decRad) * Math.sin(raRad);
-        const z = r * Math.sin(decRad);
-        return new THREE.Vector3(x, y, z);
       }
-      
-      // Build each constellation.
-      constellationsData.forEach(constellation => {
-        const group = new THREE.Group();
-        group.name = constellation.name;
-        constellation.lines.forEach(segment => {
-          const [star1Name, star2Name] = segment;
-          const star1 = constellation.stars[star1Name];
-          const star2 = constellation.stars[star2Name];
-          if (star1 && star2) {
-            const point1 = sphericalToCartesian(star1.ra, star1.dec, constellationsRadius);
-            const point2 = sphericalToCartesian(star2.ra, star2.dec, constellationsRadius);
-            const geometry = new THREE.BufferGeometry().setFromPoints([point1, point2]);
-            const line = new THREE.Line(geometry, lineMaterial);
-            group.add(line);
-          }
-        });
-        constellationGroup.add(group);
-      });
-      scene.add(constellationGroup);
+      return closestIndex;
     }
-    
+
+    // Update the aColor and aSize attributes.
+    function updateStarAttributes(hoveredIndex) {
+      const colors = particleGeometry.attributes.aColor.array;
+      const sizes = particleGeometry.attributes.aSize.array;
+      for (let i = 0; i < params.particleCount; i++) {
+        let baseColor, baseSize;
+        if (i === hoveredIndex) {
+          baseColor = hoverStarColor.clone().multiplyScalar(params.starIntensity);
+          baseSize = params.hoverStarSize;
+        } else {
+          baseColor = defaultStarColor.clone().multiplyScalar(params.starIntensity);
+          baseSize = params.starSize;
+        }
+        colors[i * 3] = baseColor.r;
+        colors[i * 3 + 1] = baseColor.g;
+        colors[i * 3 + 2] = baseColor.b;
+        sizes[i] = baseSize;
+      }
+      particleGeometry.attributes.aColor.needsUpdate = true;
+      particleGeometry.attributes.aSize.needsUpdate = true;
+    }
+
     /**********************************************************************
      * Google Logo Construction
      **********************************************************************/
-    // Define Google colors and logo dimensions.
-    const blue   = 0x4285F4;
-    const red    = 0xEA4335;
-    const yellow = 0xFBBC05;
-    const green  = 0x34A853;
-    const outerRadius = 5;
-    const innerRadius = 4;
-    const depth = 1;
-    
-    // Helper: Create a ring segment (extruded shape) between two angles.
     function createRingSegment(startAngle, endAngle, color) {
       const material = new THREE.MeshPhongMaterial({ color: color, side: THREE.DoubleSide });
       const shape = new THREE.Shape();
-      // Outer arc.
       shape.absarc(0, 0, outerRadius, startAngle, endAngle, false);
-      // Line to inner arc.
       shape.lineTo(innerRadius * Math.cos(endAngle), innerRadius * Math.sin(endAngle));
-      // Inner arc.
       shape.absarc(0, 0, innerRadius, endAngle, startAngle, true);
-      // Line back to start.
       shape.lineTo(outerRadius * Math.cos(startAngle), outerRadius * Math.sin(startAngle));
       const extrudeSettings = { depth: depth, bevelEnabled: false };
       const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
       return new THREE.Mesh(geometry, material);
     }
-    
-    // Helper: Create the blue "G" segment.
+
     function createBlueGSegment(color) {
       const material = new THREE.MeshPhongMaterial({ color: color, side: THREE.DoubleSide });
       const shape = new THREE.Shape();
-      // Build a simple rectangular "arm" of the G.
       shape.moveTo(1, -0.5);
       shape.lineTo(outerRadius, -0.5);
       shape.lineTo(outerRadius, -2);
@@ -320,41 +320,61 @@
       const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
       return new THREE.Mesh(geometry, material);
     }
-    
-    // Build and return the Google logo as a group.
+
     function createGoogleLogo() {
       const group = new THREE.Group();
-      const redSegment    = createRingSegment(Math.PI * 0.2, Math.PI * 0.57, red);
-      const yellowSegment = createRingSegment(Math.PI * 0.57, Math.PI * 0.93, yellow);
-      const greenSegment  = createRingSegment(Math.PI * 0.93, Math.PI * 1.58, green);
-      const blueSegment   = createRingSegment(Math.PI * 1.58, Math.PI * 1.95, blue);
-      const blueG         = createBlueGSegment(blue);
-      group.add(redSegment);
-      group.add(yellowSegment);
-      group.add(greenSegment);
-      group.add(blueSegment);
+      const segRed = createRingSegment(Math.PI * 0.2, Math.PI * 0.57, red);
+      const segYellow = createRingSegment(Math.PI * 0.57, Math.PI * 0.93, yellow);
+      const segGreen = createRingSegment(Math.PI * 0.93, Math.PI * 1.58, green);
+      const segBlue = createRingSegment(Math.PI * 1.58, Math.PI * 1.95, blue);
+      const blueG = createBlueGSegment(blue);
+      group.add(segRed);
+      group.add(segYellow);
+      group.add(segGreen);
+      group.add(segBlue);
       group.add(blueG);
       group.name = "googleLogo";
       return group;
     }
-    
+
     /**********************************************************************
      * OpenAI Logo Construction
      **********************************************************************/
-    // Create a simple extruded ring to represent the OpenAI logo.
     function createOpenAILogo() {
       const group = new THREE.Group();
-      const openaiColor = 0x333333; // Dark gray.
-      // Define ring dimensions.
-      const outerR = 5;
-      const innerR = 4;
-      const extrudeDepth = 1;
+      const openaiColor = 0x333333;
       const shape = new THREE.Shape();
-      shape.absarc(0, 0, outerR, 0, Math.PI * 2, false);
-      const holePath = new THREE.Path();
-      holePath.absarc(0, 0, innerR, 0, Math.PI * 2, true);
-      shape.holes.push(holePath);
-      const extrudeSettings = { depth: extrudeDepth, bevelEnabled: false };
+      const numPoints = 64;
+      const baseRadius = 5;
+      for (let i = 0; i < numPoints; i++) {
+        let angle = (i / numPoints) * Math.PI * 2;
+        let modulation = 0.5 * Math.sin(6 * angle);
+        let r = baseRadius + modulation;
+        let x = r * Math.cos(angle);
+        let y = r * Math.sin(angle);
+        if (i === 0) {
+          shape.moveTo(x, y);
+        } else {
+          shape.lineTo(x, y);
+        }
+      }
+      shape.closePath();
+      const hole = new THREE.Path();
+      const innerRadiusOpenAI = 3.5;
+      const numHolePoints = 64;
+      for (let i = 0; i < numHolePoints; i++) {
+        let angle = (i / numHolePoints) * Math.PI * 2;
+        let x = innerRadiusOpenAI * Math.cos(angle);
+        let y = innerRadiusOpenAI * Math.sin(angle);
+        if (i === 0) {
+          hole.moveTo(x, y);
+        } else {
+          hole.lineTo(x, y);
+        }
+      }
+      hole.closePath();
+      shape.holes.push(hole);
+      const extrudeSettings = { depth: 1, bevelEnabled: false };
       const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
       const material = new THREE.MeshPhongMaterial({ color: openaiColor, side: THREE.DoubleSide });
       const mesh = new THREE.Mesh(geometry, material);
@@ -362,59 +382,93 @@
       group.name = "openaiLogo";
       return group;
     }
-    
+
     /**********************************************************************
-     * Click Detection: Open the Respective Website on Logo Click
+     * Background Image Loader
      **********************************************************************/
-    const raycaster = new THREE.Raycaster();
-    const mouse = new THREE.Vector2();
+    function loadBackgroundImage(url) {
+      if (!url) {
+        scene.background = new THREE.Color(0x000000);
+        return;
+      }
+      const loader = new THREE.TextureLoader();
+      loader.load(
+        url,
+        function(texture) {
+          scene.background = texture;
+        },
+        undefined,
+        function(err) {
+          console.error("Error loading background image:", err);
+          scene.background = new THREE.Color(0x000000);
+        }
+      );
+    }
+
+    /**********************************************************************
+     * Click Detection: Open Website on Logo Click
+     **********************************************************************/
     function onDocumentClick(event) {
       event.preventDefault();
-      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-      mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
-      
-      raycaster.setFromCamera(mouse, camera);
-      const intersectsGoogle = raycaster.intersectObjects(googleLogoGroup.children, true);
-      const intersectsOpenAI = raycaster.intersectObjects(openaiLogoGroup.children, true);
+      const raycasterLogos = new THREE.Raycaster();
+      raycasterLogos.setFromCamera(mouse, camera);
+      const intersectsGoogle = raycasterLogos.intersectObjects(googleLogoGroup.children, true);
+      const intersectsOpenAI = raycasterLogos.intersectObjects(openaiLogoGroup.children, true);
       if (intersectsGoogle.length > 0) {
         window.open("https://www.google.com", "_blank");
       } else if (intersectsOpenAI.length > 0) {
         window.open("https://www.openai.com", "_blank");
       }
     }
-    
+
     /**********************************************************************
-     * Animation Loop: Update Particles, Rotate Logos & Render Scene
+     * Mouse Move: Update Global Mouse Coordinates
+     **********************************************************************/
+    function onDocumentMouseMove(event) {
+      event.preventDefault();
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+    }
+
+    /**********************************************************************
+     * Animation Loop: Update Particles, Hover, Rotation, Render
      **********************************************************************/
     function animate() {
       requestAnimationFrame(animate);
       const delta = clock.getDelta();
-      
-      // Update Big Bang particle positions.
-      const positions = particleGeometry.attributes.position.array;
-      for (let i = 0; i < params.particleCount; i++) {
-        const index = i * 3;
-        positions[index]     += velocities[index] * params.expansionSpeed * delta;
-        positions[index + 1] += velocities[index + 1] * params.expansionSpeed * delta;
-        positions[index + 2] += velocities[index + 2] * params.expansionSpeed * delta;
+      const elapsed = clock.getElapsedTime();
+
+      // Expand particles until expansionDuration.
+      if (elapsed < params.expansionDuration) {
+        const positions = particleGeometry.attributes.position.array;
+        for (let i = 0; i < params.particleCount; i++) {
+          const index = i * 3;
+          positions[index]     += velocities[index] * params.expansionSpeed * delta;
+          positions[index + 1] += velocities[index + 1] * params.expansionSpeed * delta;
+          positions[index + 2] += velocities[index + 2] * params.expansionSpeed * delta;
+        }
+        particleGeometry.attributes.position.needsUpdate = true;
+      } else {
+        particleSystem.rotation.y += params.starRotationSpeed * delta;
       }
-      particleGeometry.attributes.position.needsUpdate = true;
-      
-      // Optionally auto-zoom the camera outward.
+
+      // Custom hover effect.
+      const hoveredIndex = checkHover();
+      updateStarAttributes(hoveredIndex);
+
       if (params.autoZoom) {
         camera.position.z += params.zoomSpeed * delta;
       }
-      
-      // Slowly rotate both logos.
+
       if (googleLogoGroup) { googleLogoGroup.rotation.y += 0.01; }
       if (openaiLogoGroup) { openaiLogoGroup.rotation.y += 0.01; }
-      
+
       controls.update();
       composer.render();
     }
-    
+
     /**********************************************************************
-     * Handle Window Resize Events
+     * Handle Window Resize
      **********************************************************************/
     function onWindowResize() {
       camera.aspect = window.innerWidth / window.innerHeight;
@@ -422,8 +476,8 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
       composer.setSize(window.innerWidth, window.innerHeight);
     }
-    
-    // Initialize the scene and start the animation loop.
+
+    // Initialize and start the animation.
     init();
     animate();
   </script>
