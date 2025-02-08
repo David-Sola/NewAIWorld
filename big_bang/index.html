@@ -36,13 +36,13 @@
       particleCount: 3500,        // Total number of particles.
       autoZoom: false,            // Auto zoom disabled.
       zoomSpeed: 0,               // Zoom speed is 0.
-      expansionDuration: 0.95,    // Seconds until expansion stops.
+      expansionDuration: 1.5,    // Seconds until expansion stops.
       starRotationSpeed: 0.05,    // Rotation speed (radians per second) after expansion.
-      backgroundURL: "D:\\Projekte\\o3-Mini\\NewAIWorld\\big_bang\\BackgroundEnhanced.jpg", // Background image URL.
-      starIntensity: 10.0,        // Multiplier for star brightness.
+      backgroundURL: "BackgroundEnhanced.jpg", // Example using forward slashes
+      starIntensity: 20.0,        // Multiplier for star brightness.
       hoverThreshold: 1000,       // Hover threshold in screen pixels.
       starSize: 2,                // Initial star size (in pixels).
-      hoverStarSize: 4            // Star size when hovered (doubled).
+      hoverStarSize: 6            // Star size when hovered (doubled).
     };
 
     /**********************************************************************
@@ -65,7 +65,7 @@
     let particleSystem, particleGeometry;
     let velocities;  // Array of velocities for each star.
     let clock, gui;
-    let googleLogoGroup, openaiLogoGroup, xStackedGroup, bgStackedGroup;
+    let googleLogoGroup, openaiStackedGroup, xStackedGroup, bgStackedGroup;
     let currentHoveredIndex = -1;  // Index of the currently hovered star.
     const mouse = new THREE.Vector2();  // Global mouse coordinates (in NDC).
 
@@ -144,22 +144,20 @@
       // Create logos.
       googleLogoGroup = createGoogleLogo();
       googleLogoGroup.scale.set(0.3, 0.3, 0.3);
-      googleLogoGroup.position.set(-3, 3, 3);
+      googleLogoGroup.position.set(-7, -7, -7);
       scene.add(googleLogoGroup);
 
-      openaiLogoGroup = createOpenAILogo();
-      openaiLogoGroup.scale.set(0.3, 0.3, 0.3);
-      openaiLogoGroup.position.set(3, -3, -3);
-      scene.add(openaiLogoGroup);
+      openaiStackedGroup = createOpenAIStackedLogo();
+      openaiStackedGroup.scale.set(0.3, 0.3, 0.3);
+      openaiStackedGroup.position.set(7, 7, 7);
+      scene.add(openaiStackedGroup);
 
-      // NEW: The stacked X logo with black removed.
       xStackedGroup = createXStackedLogo();
-      xStackedGroup.position.set(0, 0, 0);  // adjust if you want
+      xStackedGroup.position.set(0, 0, 0);
       scene.add(xStackedGroup);
 
-      // Our stacked BG planes for a pseudo-3D effect
       bgStackedGroup = createBGStackedLogo();
-      bgStackedGroup.position.set(-3, -3, 5);  // tweak position
+      bgStackedGroup.position.set(-3, -3, 5);
       scene.add(bgStackedGroup);
 
       // dat.GUI.
@@ -174,6 +172,10 @@
       gui.add(params, 'autoZoom').name("Auto Zoom");
       gui.add(params, 'zoomSpeed', 0, 20).name("Zoom Speed");
       gui.add(params, 'backgroundURL').name("Background URL").onFinishChange(loadBackgroundImage);
+
+      // **IMPORTANT**: Call loadBackgroundImage with the current param
+      // so you actually see your background from the start.
+      loadBackgroundImage(params.backgroundURL);
 
       // Event listeners.
       window.addEventListener('resize', onWindowResize, false);
@@ -308,7 +310,7 @@
     }
 
     /**********************************************************************
-     * Google Logo Construction
+     * Google Logo Construction (unchanged)
      **********************************************************************/
     function createRingSegment(startAngle, endAngle, color) {
       const material = new THREE.MeshPhongMaterial({ color: color, side: THREE.DoubleSide });
@@ -344,58 +346,90 @@
       const segGreen = createRingSegment(Math.PI * 0.93, Math.PI * 1.58, green);
       const segBlue = createRingSegment(Math.PI * 1.58, Math.PI * 1.95, blue);
       const blueG = createBlueGSegment(blue);
-      group.add(segRed);
-      group.add(segYellow);
-      group.add(segGreen);
-      group.add(segBlue);
-      group.add(blueG);
+      group.add(segRed, segYellow, segGreen, segBlue, blueG);
       group.name = "googleLogo";
       return group;
     }
 
     /**********************************************************************
-     * OpenAI Logo Construction
+     * OpenAI Logo: stacked planes that remove black via a custom shader
      **********************************************************************/
-    function createOpenAILogo() {
+    function createOpenAIStackedLogo() {
       const group = new THREE.Group();
-      const openaiColor = 0x333333;
+      const loader = new THREE.TextureLoader();
 
-      const shape = new THREE.Shape();
-      const numPoints = 64;
-      const baseRadius = 5;
+      // 1) The custom shaders that cut out black.
+      const vertexShaderOpenAI = `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `;
 
-      for (let i = 0; i < numPoints; i++) {
-        const angle = (i / numPoints) * Math.PI * 2;
-        const modulation = 0.5 * Math.sin(6 * angle);
-        const r = baseRadius + modulation;
-        const x = r * Math.cos(angle);
-        const y = r * Math.sin(angle);
-        if (i === 0) shape.moveTo(x, y);
-        else shape.lineTo(x, y);
-      }
-      shape.closePath();
+      const fragmentShaderOpenAI = `
+        uniform sampler2D map;
+        uniform vec3 colorToRemove;
+        uniform float threshold;
+        varying vec2 vUv;
+        void main() {
+          vec4 texColor = texture2D(map, vUv);
+          float dist = distance(texColor.rgb, colorToRemove);
+          if(dist < threshold) discard;  // remove near-black
+          gl_FragColor = texColor;
+        }
+      `;
 
-      // Inner hole
-      const hole = new THREE.Path();
-      const innerRadiusOpenAI = 3.5;
-      const numHolePoints = 64;
-      for (let i = 0; i < numHolePoints; i++) {
-        const angle = (i / numHolePoints) * Math.PI * 2;
-        const x = innerRadiusOpenAI * Math.cos(angle);
-        const y = innerRadiusOpenAI * Math.sin(angle);
-        if (i === 0) hole.moveTo(x, y);
-        else hole.lineTo(x, y);
-      }
-      hole.closePath();
-      shape.holes.push(hole);
+      // 2) Load your OpenAI logo image (with black background).
+      loader.load(
+        "OpenAI_logo.png",  // Replace with the path/URL to your black-based OpenAI image
+        (texture) => {
+          // We'll create multiple stacked planes, just like for X.
+          const numPlanes = 25;
+          const zSpacing = 0.005;
+          const baseSize = 14; 
+          const scaleStep = 0.0;
+          const alphaStep = 0.0;
 
-      const extrudeSettings = { depth: 1, bevelEnabled: false };
-      const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-      const material = new THREE.MeshPhongMaterial({ color: openaiColor, side: THREE.DoubleSide });
-      const mesh = new THREE.Mesh(geometry, material);
-      group.add(mesh);
+          for (let i = 0; i < numPlanes; i++) {
+            // Plane geometry
+            const planeGeom = new THREE.PlaneGeometry(baseSize, baseSize);
 
-      group.name = "openaiLogo";
+            // ShaderMaterial that discards black pixels.
+            const openAIUniforms = {
+              map: { value: texture },
+              colorToRemove: { value: new THREE.Color(0x000000) },
+              threshold: { value: 0.5 } // tweak as needed
+            };
+
+            const planeMat = new THREE.ShaderMaterial({
+              uniforms: openAIUniforms,
+              vertexShader: vertexShaderOpenAI,
+              fragmentShader: fragmentShaderOpenAI,
+              transparent: true,
+              side: THREE.DoubleSide
+            });
+
+            const plane = new THREE.Mesh(planeGeom, planeMat);
+            plane.name = "openaiPlane_" + i;
+
+            // optional scale logic for layering
+            const scaleFactor = 1 + i * scaleStep;
+            plane.scale.set(scaleFactor, scaleFactor, 1);
+
+            // position behind the previous
+            plane.position.z = -i * zSpacing;
+
+            group.add(plane);
+          }
+        },
+        undefined,
+        (err) => {
+          console.error("Error loading OpenAI image:", err);
+        }
+      );
+
+      group.name = "openaiStacked";
       return group;
     }
 
@@ -406,8 +440,6 @@
       const group = new THREE.Group();
       const loader = new THREE.TextureLoader();
 
-      // 1) The custom shaders that cut out black.
-      //    We pass in colorToRemove = (0,0,0) and do a threshold check.
       const xVertexShader = `
         varying vec2 vUv;
         void main() {
@@ -423,36 +455,28 @@
         varying vec2 vUv;
         void main() {
           vec4 texColor = texture2D(map, vUv);
-          // measure distance from black
           float dist = distance(texColor.rgb, colorToRemove);
-          // if we're within threshold, discard (fully transparent)
           if(dist < threshold) discard;
-          // else keep the pixel
           gl_FragColor = texColor;
         }
       `;
 
-      // 2) Load the raw X image (with black background).
       loader.load(
-        "X_logo.png",           // replace with actual path/URL
+        "X_logo.png",  // replace with the real path/URL
         (texture) => {
-          // We'll create multiple stacked planes, just like the BG effect.
-          // Adjust these to control layers, spacing, scale, etc.
           const numPlanes = 35;
           const zSpacing = 0.003;
-          const baseSize = 3;  // plane size
+          const baseSize = 4.5;
           const scaleStep = 0.0;
           const alphaStep = 0.0;
 
           for (let i = 0; i < numPlanes; i++) {
-            // The geometry
             const planeGeom = new THREE.PlaneGeometry(baseSize, baseSize);
 
-            // We'll create a ShaderMaterial that discards black pixels.
             const xUniforms = {
               map: { value: texture },
               colorToRemove: { value: new THREE.Color(0x000000) },
-              threshold: { value: 0.9 } // tweak if some black remains or edges get cut
+              threshold: { value: 0.9 }
             };
 
             const planeMat = new THREE.ShaderMaterial({
@@ -466,11 +490,8 @@
             const plane = new THREE.Mesh(planeGeom, planeMat);
             plane.name = "xPlane_" + i;
 
-            // scale up each subsequent plane slightly if desired
             const scaleFactor = 1 + i * scaleStep;
             plane.scale.set(scaleFactor, scaleFactor, 1);
-
-            // move each plane behind the previous
             plane.position.z = -i * zSpacing;
 
             group.add(plane);
@@ -493,11 +514,9 @@
       const group = new THREE.Group();
       const loader = new THREE.TextureLoader();
 
-      // REPLACE "BG_neon.jpg" with an actual path/URL to your image:
       loader.load(
-        "BG_neon.jpg",
+        "BG_1neon.jpg",  // Replace with actual path/URL to your BG image
         (texture) => {
-          // Adjust these to control how many planes, spacing, scale, etc.
           const numPlanes = 30;
           const zSpacing = 0.01;
           const baseSize = 3;
@@ -535,24 +554,47 @@
     /**********************************************************************
      * Background Image Loader
      **********************************************************************/
-    function loadBackgroundImage(url) {
+     function loadBackgroundImage(url) {
       if (!url) {
-        scene.background = new THREE.Color(0x000000);
-        return;
-      }
-      const loader = new THREE.TextureLoader();
-      loader.load(
-        url,
-        function(texture) {
-          scene.background = texture;
-        },
-        undefined,
-        function(err) {
-          console.error("Error loading background image:", err);
-          scene.background = new THREE.Color(0x000000);
-        }
-      );
+    scene.background = new THREE.Color(0x000000);
+    return;
+  }
+
+  const loader = new THREE.TextureLoader();
+  loader.load(
+    url,
+    function(texture) {
+      // Improve texture quality
+      texture.anisotropy = 16;
+      texture.encoding = THREE.sRGBEncoding;
+      texture.magFilter = THREE.LinearFilter;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+
+      // Create a large sphere. Adjust the radius and segmentation for your needs.
+      const radius = 1000; // Make sure this is larger than your camera's position
+      const widthSegments = 60;
+      const heightSegments = 40;
+      const geometry = new THREE.SphereGeometry(radius, widthSegments, heightSegments);
+
+      // Create the material with the texture and render the inside of the sphere
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        side: THREE.BackSide, // Render inside of the sphere
+        transparent: true, 
+        opacity: 0.05,
+      });
+
+      const sphereMesh = new THREE.Mesh(geometry, material);
+      scene.add(sphereMesh);
+    },
+    undefined,
+    function(err) {
+      console.error("Error loading spherical background image:", err);
+      scene.background = new THREE.Color(0x000000);
     }
+  );
+}
+
 
     /**********************************************************************
      * Click Detection: Open Website on Logo Click
@@ -569,14 +611,16 @@
         return;
       }
 
-      // Check OpenAI
-      const intersectsOpenAI = raycasterLogos.intersectObjects(openaiLogoGroup.children, true);
-      if (intersectsOpenAI.length > 0) {
-        window.open("https://www.openai.com", "_blank");
-        return;
+      // Check stacked OpenAI
+      if (openaiStackedGroup) {
+        const intersectsOpenAI = raycasterLogos.intersectObjects(openaiStackedGroup.children, true);
+        if (intersectsOpenAI.length > 0) {
+          window.open("https://www.openai.com", "_blank");
+          return;
+        }
       }
 
-      // Check X (the stacked planes)
+      // Check stacked X
       if (xStackedGroup) {
         const intersectsX = raycasterLogos.intersectObjects(xStackedGroup.children, true);
         if (intersectsX.length > 0) {
@@ -585,11 +629,10 @@
         }
       }
 
-      // Check BG stacked planes
+      // Check stacked BG
       if (bgStackedGroup) {
         const intersectsBG = raycasterLogos.intersectObjects(bgStackedGroup.children, true);
         if (intersectsBG.length > 0) {
-          // Replace with any link or action you want
           window.open("https://example.com/bg-neon", "_blank");
           return;
         }
@@ -624,7 +667,7 @@
         }
         particleGeometry.attributes.position.needsUpdate = true;
       } else {
-        // Once expansion stops, we rotate the particle system slowly.
+        // Once expansion stops, rotate the particle system slowly.
         particleSystem.rotation.y += params.starRotationSpeed * delta;
       }
 
@@ -638,10 +681,10 @@
       }
 
       // Rotate the logos slowly
-      if (googleLogoGroup) googleLogoGroup.rotation.y += 0.01;
-      if (openaiLogoGroup) openaiLogoGroup.rotation.y += 0.01;
-      if (xStackedGroup)  xStackedGroup.rotation.y  += 0.01;  // spin the stacked X
-      if (bgStackedGroup) bgStackedGroup.rotation.y += 0.005;
+      if (googleLogoGroup)     googleLogoGroup.rotation.y     += 0.01;
+      if (openaiStackedGroup)  openaiStackedGroup.rotation.y  += 0.01;
+      if (xStackedGroup)       xStackedGroup.rotation.y       += 0.01;
+      if (bgStackedGroup)      bgStackedGroup.rotation.y      += 0.005;
 
       controls.update();
       composer.render();
