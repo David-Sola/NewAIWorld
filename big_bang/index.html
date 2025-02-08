@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Big Bang Simulation - Three.js Demo</title>
+  <style>
+    /* Ensure the canvas fills the screen */
+    body { margin: 0; overflow: hidden; background-color: #000; }
+    canvas { display: block; }
+  </style>
+  <!-- Import map to resolve the bare specifier "three" -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.128.0/build/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- Run this code via a local server (e.g., using "python -m http.server") -->
+  <script type="module">
+    // Now that we have an import map, "three" resolves correctly.
+    import * as THREE from 'three';
+    import { OrbitControls } from 'https://unpkg.com/three@0.128.0/examples/jsm/controls/OrbitControls.js';
+    import { EffectComposer } from 'https://unpkg.com/three@0.128.0/examples/jsm/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'https://unpkg.com/three@0.128.0/examples/jsm/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'https://unpkg.com/three@0.128.0/examples/jsm/postprocessing/UnrealBloomPass.js';
+    import { GUI } from 'https://unpkg.com/dat.gui@0.7.7/build/dat.gui.module.js';
+    
+    /**********************************************************************
+     * Global Variables & Simulation Parameters
+     **********************************************************************/
+    let scene, camera, renderer, controls, composer;
+    let particleSystem, particleGeometry, particleMaterial;
+    let velocities;
+    let clock;
+    let gui;
+    
+    const params = {
+      expansionSpeed: 15.0,  // How fast particles expand outward
+      particleCount: 75000,  // Total number of particles
+      autoZoom: true,        // Automatically zoom out the camera
+      zoomSpeed: 5.0         // Speed of camera zoom
+    };
+    
+    /**********************************************************************
+     * Initialize Scene, Camera, Renderer, Lights & Controls
+     **********************************************************************/
+    function init() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x000000);
+      scene.fog = new THREE.FogExp2(0x000000, 0.00015);
+      
+      camera = new THREE.PerspectiveCamera(
+        60,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        10000
+      );
+      camera.position.set(0, 0, 50);
+      
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      document.body.appendChild(renderer.domElement);
+      
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
+      scene.add(ambientLight);
+      
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+      directionalLight.position.set(50, 50, 50);
+      directionalLight.castShadow = true;
+      directionalLight.shadow.mapSize.width = 1024;
+      directionalLight.shadow.mapSize.height = 1024;
+      scene.add(directionalLight);
+      
+      clock = new THREE.Clock();
+      
+      createParticleSystem();
+      
+      composer = new EffectComposer(renderer);
+      const renderPass = new RenderPass(scene, camera);
+      composer.addPass(renderPass);
+      const bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        1.5,
+        0.4,
+        0.85
+      );
+      composer.addPass(bloomPass);
+      
+      gui = new GUI();
+      gui.add(params, 'expansionSpeed', 0, 200).name("Expansion Speed");
+      gui.add(params, 'autoZoom').name("Auto Zoom");
+      gui.add(params, 'zoomSpeed', 0, 20).name("Zoom Speed");
+      
+      window.addEventListener('resize', onWindowResize, false);
+    }
+    
+    /**********************************************************************
+     * Create the Particle System (Simulating the Big Bang)
+     **********************************************************************/
+    function createParticleSystem() {
+      particleGeometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(params.particleCount * 3);
+      velocities = new Float32Array(params.particleCount * 3);
+      
+      for (let i = 0; i < params.particleCount; i++) {
+        const index = i * 3;
+        const r = Math.random() * 0.5;
+        const theta = Math.random() * 2 * Math.PI;
+        const phi = Math.acos((Math.random() * 2) - 1);
+        positions[index]     = r * Math.sin(phi) * Math.cos(theta);
+        positions[index + 1] = r * Math.sin(phi) * Math.sin(theta);
+        positions[index + 2] = r * Math.cos(phi);
+        
+        const speed = Math.random() * 0.5 + 0.5;
+        velocities[index]     = speed * Math.sin(phi) * Math.cos(theta);
+        velocities[index + 1] = speed * Math.sin(phi) * Math.sin(theta);
+        velocities[index + 2] = speed * Math.cos(phi);
+      }
+      
+      particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      
+      const particleTexture = createParticleTexture();
+      particleMaterial = new THREE.PointsMaterial({
+        size: 2,
+        map: particleTexture,
+        blending: THREE.AdditiveBlending,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.8
+      });
+      
+      particleSystem = new THREE.Points(particleGeometry, particleMaterial);
+      scene.add(particleSystem);
+    }
+    
+    /**********************************************************************
+     * Helper: Create a Glowing Particle Texture Using Canvas
+     **********************************************************************/
+    function createParticleTexture() {
+      const size = 64;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext('2d');
+      
+      const gradient = context.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+      gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+      gradient.addColorStop(0.2, 'rgba(255, 255, 255, 1)');
+      gradient.addColorStop(0.4, 'rgba(128, 128, 255, 0.6)');
+      gradient.addColorStop(1, 'rgba(0, 0, 128, 0)');
+      
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, size, size);
+      
+      return new THREE.CanvasTexture(canvas);
+    }
+    
+    /**********************************************************************
+     * Animation Loop: Update Particle Positions and Render the Scene
+     **********************************************************************/
+    function animate() {
+      requestAnimationFrame(animate);
+      
+      const delta = clock.getDelta();
+      const positions = particleGeometry.attributes.position.array;
+      for (let i = 0; i < params.particleCount; i++) {
+        const index = i * 3;
+        positions[index]     += velocities[index] * params.expansionSpeed * delta;
+        positions[index + 1] += velocities[index + 1] * params.expansionSpeed * delta;
+        positions[index + 2] += velocities[index + 2] * params.expansionSpeed * delta;
+      }
+      particleGeometry.attributes.position.needsUpdate = true;
+      
+      if (params.autoZoom) {
+        camera.position.z += params.zoomSpeed * delta;
+      }
+      
+      controls.update();
+      composer.render();
+    }
+    
+    /**********************************************************************
+     * Adjust the Scene When the Window is Resized
+     **********************************************************************/
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      composer.setSize(window.innerWidth, window.innerHeight);
+    }
+    
+    // Start the simulation
+    init();
+    animate();
+  </script>
+</body>
+</html>
