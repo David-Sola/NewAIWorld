@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Main – Animated Logos with Wrapped Side Text</title>
+  <style>
+    body { margin: 0; overflow: hidden; background-color: #000; }
+    canvas { display: block; }
+  </style>
+  <!-- Import map for three.js -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.128.0/build/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- Run via a local server -->
+  <script type="module">
+    /**********************************************************************
+     * Imports: Three.js, OrbitControls, postprocessing & dat.GUI.
+     **********************************************************************/
+    import * as THREE from 'three';
+    import { OrbitControls } from 'https://unpkg.com/three@0.128.0/examples/jsm/controls/OrbitControls.js';
+    import { EffectComposer } from 'https://unpkg.com/three@0.128.0/examples/jsm/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'https://unpkg.com/three@0.128.0/examples/jsm/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'https://unpkg.com/three@0.128.0/examples/jsm/postprocessing/UnrealBloomPass.js';
+    import { GUI } from 'https://unpkg.com/dat.gui@0.7.7/build/dat.gui.module.js';
+
+    /**********************************************************************
+     * Simulation Parameters – adjustable via dat.GUI.
+     **********************************************************************/
+    const params = {
+      expansionSpeed: 50.0,
+      particleCount: 3500,
+      autoZoom: false,
+      zoomSpeed: 0,
+      expansionDuration: 1.5,
+      starRotationSpeed: 0.05,
+      backgroundURL: "/wp-content/Images/BackgroundEnhanced.jpg",
+      starIntensity: 400.0,
+      hoverThreshold: 1000,
+      starSize: 3,
+      hoverStarSize: 6,
+      showGUI: false
+    };
+
+    /**********************************************************************
+     * Global Variables.
+     **********************************************************************/
+    let scene, camera, renderer, controls, composer;
+    let particleSystem, particleGeometry;
+    let velocities;
+    let clock, gui;
+    let animGroup;   // Group for particle system & other scene objects.
+    let logoGroup;   // Group for animated logos.
+    const mouse = new THREE.Vector2();
+
+    // Default star colors.
+    const defaultStarColor = new THREE.Color(0.3, 0.3, 0.3);
+    const hoverStarColor   = new THREE.Color(1, 1, 1);
+
+    /**********************************************************************
+     * Shaders for Particle System.
+     **********************************************************************/
+    const vertexShader = `
+      attribute float aSize;
+      attribute vec3 aColor;
+      varying vec3 vColor;
+      void main() {
+        vColor = aColor;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        gl_PointSize = aSize;
+      }
+    `;
+    const fragmentShader = `
+      uniform sampler2D pointTexture;
+      varying vec3 vColor;
+      void main() {
+        vec4 texColor = texture2D(pointTexture, gl_PointCoord);
+        gl_FragColor = vec4(vColor, 1.0) * texColor;
+      }
+    `;
+
+    /**********************************************************************
+     * Default Animated Logo Configuration.
+     **********************************************************************/
+    const defaultLogoAnimation = {
+      cycleTime: 10.0,         // Duration for one complete loop.
+      startY: -20,             // Y position (offscreen bottom).
+      endY: 20,                // Y position (offscreen top).
+      fadeInFraction: 0.2,     // Fraction of cycle for fade in.
+      fadeOutFraction: 0.66,   // Fraction when fade-out begins.
+      offset: 0                // Time offset (used to space logos).
+    };
+
+    const animatedLogos = []; // Array to hold animated logos with animation configs.
+
+    /**********************************************************************
+     * Initialization: Scene, Camera, Renderer, Controls & Effects.
+     **********************************************************************/
+    function init() {
+      // Scene.
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x000000);
+      scene.fog = new THREE.FogExp2(0x000000, 0.00015);
+
+      // Camera.
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 10000);
+      camera.position.set(0, 0, 50);
+
+      // Renderer.
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      document.body.appendChild(renderer.domElement);
+
+      // Groups.
+      animGroup = new THREE.Group();
+      scene.add(animGroup);
+      logoGroup = new THREE.Group();
+      scene.add(logoGroup);
+
+      // Controls.
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+
+      // Lights.
+      scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+      directionalLight.position.set(50, 50, 50);
+      directionalLight.castShadow = true;
+      directionalLight.shadow.mapSize.set(1024, 1024);
+      scene.add(directionalLight);
+
+      // Clock.
+      clock = new THREE.Clock();
+
+      // Particle system.
+      createParticleSystem();
+
+      // Postprocessing (bloom effect).
+      composer = new EffectComposer(renderer);
+      composer.addPass(new RenderPass(scene, camera));
+      const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+      composer.addPass(bloomPass);
+
+      // Create animated logos.
+      // BG-neon logo (label "Blog") – with side text "2323".
+      let bgLogo = createAnimatedLogo(
+        "/wp-content/Images/BG_neon.jpg",
+        "Blog",
+        "Relevant updates and interesting guides",
+        { numPlanes: 30, zSpacing: 0.01, baseSize: 3, defaultOpacity: 0.1 },
+        {},
+        { fontsize: 10, scaleFactor: 0.1, maxWidth: 70 }
+      );
+      bgLogo.group.name = "bgStacked";
+      logoGroup.add(bgLogo.group);
+      animatedLogos.push(bgLogo);
+
+      // News logo (label "AI News") – with side text "123123123".
+      let newsLogo = createAnimatedLogo(
+        "/wp-content/Images/news.jpg",
+        "AI News",
+        "Latest AI tools to stay up to date in the New AI World",
+        { numPlanes: 30, zSpacing: 0.01, baseSize: 3, defaultOpacity: 0.1 },
+        {},
+        { fontsize: 10, scaleFactor: 0.1, maxWidth: 70 }
+      );
+      newsLogo.group.name = "newsLogo";
+      logoGroup.add(newsLogo.group);
+      animatedLogos.push(newsLogo);
+
+      // Tools logo (label "AI Tools") – with side text "Sample Text for right side".
+      let toolsLogo = createAnimatedLogo(
+        "/wp-content/Images/Tools.jpg",
+        "AI Tools",
+        "Latest News covering all relevant topics around the New AI World",
+        { numPlanes: 30, zSpacing: 0.01, baseSize: 3, defaultOpacity: 0.1 },
+        {},
+        { fontsize: 10, scaleFactor: 0.1, maxWidth: 70 }
+      );
+      toolsLogo.group.name = "toolsLogo";
+      logoGroup.add(toolsLogo.group);
+      animatedLogos.push(toolsLogo);
+
+      // Evenly space the logos in time by setting their animation offsets.
+      animatedLogos.forEach((item, index) => {
+        item.animation.offset = index * (item.animation.cycleTime / animatedLogos.length);
+      });
+
+      // dat.GUI Setup.
+      gui = new GUI();
+      gui.add(params, 'expansionSpeed', 0, 200).name("Expansion Speed");
+      gui.add(params, 'expansionDuration', 0, 60).name("Expansion Duration (s)");
+      gui.add(params, 'starRotationSpeed', 0, 0.2).name("Star Rotation Speed");
+      gui.add(params, 'starIntensity', 0, 100).name("Star Intensity");
+      gui.add(params, 'hoverThreshold', 1, 2000).name("Hover Threshold (px)");
+      gui.add(params, 'starSize', 0, 20).name("Initial Star Size");
+      gui.add(params, 'hoverStarSize', 0, 40).name("Hover Star Size");
+      gui.add(params, 'autoZoom').name("Auto Zoom");
+      gui.add(params, 'zoomSpeed', 0, 20).name("Zoom Speed");
+      gui.add(params, 'backgroundURL').name("Background URL").onFinishChange(loadBackgroundImage);
+      if (!params.showGUI) gui.hide();
+
+      // Load background image.
+      loadBackgroundImage(params.backgroundURL);
+
+      // Event listeners.
+      window.addEventListener('resize', onWindowResize, false);
+      renderer.domElement.addEventListener('click', onDocumentClick, false);
+      renderer.domElement.addEventListener('touchstart', onDocumentTouchStart, false);
+      renderer.domElement.addEventListener('mousemove', onDocumentMouseMove, false);
+    }
+
+    /**********************************************************************
+     * Particle System using a Custom Shader Material.
+     **********************************************************************/
+    function createParticleSystem() {
+      particleGeometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(params.particleCount * 3);
+      const colors = new Float32Array(params.particleCount * 3);
+      const sizes = new Float32Array(params.particleCount);
+      velocities = new Float32Array(params.particleCount * 3);
+
+      for (let i = 0; i < params.particleCount; i++) {
+        const index = i * 3;
+        const r = Math.random() * 0.5;
+        const theta = Math.random() * 2 * Math.PI;
+        const phi = Math.acos((Math.random() * 2) - 1);
+        positions[index]     = r * Math.sin(phi) * Math.cos(theta);
+        positions[index + 1] = r * Math.sin(phi) * Math.sin(theta);
+        positions[index + 2] = r * Math.cos(phi);
+        const speed = Math.random() * 0.5 + 0.5;
+        velocities[index]     = speed * Math.sin(phi) * Math.cos(theta);
+        velocities[index + 1] = speed * Math.sin(phi) * Math.sin(theta);
+        velocities[index + 2] = speed * Math.cos(phi);
+        colors[index]     = defaultStarColor.r * params.starIntensity;
+        colors[index + 1] = defaultStarColor.g * params.starIntensity;
+        colors[index + 2] = defaultStarColor.b * params.starIntensity;
+        sizes[i] = params.starSize;
+      }
+
+      particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      particleGeometry.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
+      particleGeometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+
+      const texture = createParticleTexture();
+      const shaderMaterial = new THREE.ShaderMaterial({
+        uniforms: { pointTexture: { value: texture } },
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        transparent: true,
+        depthTest: false,
+        blending: THREE.AdditiveBlending
+      });
+
+      particleSystem = new THREE.Points(particleGeometry, shaderMaterial);
+      animGroup.add(particleSystem);
+    }
+
+    function createParticleTexture() {
+      const size = 64;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext('2d');
+      const gradient = context.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+      gradient.addColorStop(0, 'rgba(255,255,255,1)');
+      gradient.addColorStop(0.2, 'rgba(255,255,255,1)');
+      gradient.addColorStop(0.4, 'rgba(128,128,255,0.6)');
+      gradient.addColorStop(1, 'rgba(0,0,128,0)');
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, size, size);
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    /**********************************************************************
+     * Background Image Loader.
+     **********************************************************************/
+    function loadBackgroundImage(url) {
+      if (!url) {
+        scene.background = new THREE.Color(0x000000);
+        return;
+      }
+      const loader = new THREE.TextureLoader();
+      loader.load(
+        url,
+        (texture) => {
+          texture.anisotropy = 16;
+          texture.encoding = THREE.sRGBEncoding;
+          texture.magFilter = THREE.LinearFilter;
+          texture.minFilter = THREE.LinearMipmapLinearFilter;
+          const geometry = new THREE.SphereGeometry(1000, 60, 40);
+          const material = new THREE.MeshBasicMaterial({
+            map: texture,
+            side: THREE.BackSide,
+            transparent: true,
+            opacity: 0.3
+          });
+          const sphereMesh = new THREE.Mesh(geometry, material);
+          scene.add(sphereMesh);
+        },
+        undefined,
+        (err) => {
+          console.error("Error loading background image:", err);
+          scene.background = new THREE.Color(0x000000);
+        }
+      );
+    }
+
+    /**********************************************************************
+     * Refactored: Create a Stacked Logo.
+     *
+     * This function loads a texture and creates a group of stacked planes.
+     **********************************************************************/
+    function createStackedLogo(texturePath, options = {}) {
+      const numPlanes = options.numPlanes || 30;
+      const zSpacing = options.zSpacing || 0.01;
+      const baseSize = options.baseSize || 3;
+      const defaultOpacity = (options.defaultOpacity !== undefined) ? options.defaultOpacity : 0.1;
+      const group = new THREE.Group();
+      const loader = new THREE.TextureLoader();
+
+      loader.load(
+        texturePath,
+        (texture) => {
+          for (let i = 0; i < numPlanes; i++) {
+            const planeGeom = new THREE.PlaneGeometry(baseSize, baseSize);
+            const planeMat = new THREE.MeshPhongMaterial({
+              map: texture,
+              side: THREE.DoubleSide,
+              transparent: true,
+              opacity: defaultOpacity
+            });
+            const plane = new THREE.Mesh(planeGeom, planeMat);
+            plane.name = "plane_" + i;
+            plane.position.z = -i * zSpacing;
+            group.add(plane);
+          }
+        },
+        undefined,
+        (err) => {
+          console.error("Error loading texture:", err);
+        }
+      );
+      return group;
+    }
+
+    /**********************************************************************
+     * Create a Text Sprite.
+     *
+     * Uses a canvas to draw text and returns a sprite that always faces the camera.
+     * (User-provided version with increased resolution for sharper text.)
+     **********************************************************************/
+    function createTextSprite(message, parameters = {}) {
+      const fontface = parameters.fontface || "Roboto";
+      const fontsize = parameters.fontsize || 12;
+      const textColor = parameters.textColor || { r: 255, g: 255, b: 255, a: 1.0 };
+      const resolution = parameters.resolution || 4; // Increase resolution for sharper text.
+
+      // Create canvas and get context.
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+
+      // Set font for measurement.
+      context.font = fontsize + "px " + fontface;
+      const metrics = context.measureText(message);
+      const textWidth = metrics.width;
+
+      // Increase padding.
+      const padding = 10;
+      canvas.width = (textWidth + padding * 2) * resolution;
+      canvas.height = (fontsize + padding * 2) * resolution;
+
+      // Scale the context.
+      context.scale(resolution, resolution);
+
+      // Clear the canvas.
+      context.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Reset the font and alignment.
+      context.font = fontsize + "px " + fontface;
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+
+      // Draw the text.
+      context.fillStyle = `rgba(${textColor.r},${textColor.g},${textColor.b},${textColor.a})`;
+      context.fillText(message, (canvas.width / resolution) / 2, (canvas.height / resolution) / 2);
+
+      // Create texture.
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.format = THREE.RGBAFormat;
+      texture.needsUpdate = true;
+      texture.premultiplyAlpha = false;
+
+      // Create sprite material.
+      const spriteMaterial = new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        alphaTest: 0.01
+      });
+
+      // Create and scale the sprite.
+      const sprite = new THREE.Sprite(spriteMaterial);
+      const scaleFactor = parameters.scaleFactor || 0.1;
+      sprite.scale.set((canvas.width / resolution) * scaleFactor, (canvas.height / resolution) * scaleFactor, 1);
+
+      return sprite;
+    }
+
+    /**********************************************************************
+     * Create a Wrapped Text Sprite.
+     *
+     * This function wraps text into multiple lines if its width exceeds maxWidth.
+     * The canvas width is forced to maxWidth + padding*2 so that the text is confined
+     * within a fixed frame.
+     **********************************************************************/
+     function createWrappedTextSprite(message, parameters = {}) {
+  const fontface   = parameters.fontface   || "Roboto";
+  const fontsize   = parameters.fontsize   || 12;
+  const textColor  = parameters.textColor  || { r: 255, g: 255, b: 255, a: 1.0 };
+  // Set a default maxWidth; adjust this value to force wrapping as desired.
+  const maxWidth   = parameters.maxWidth   || 200; 
+  const resolution = parameters.resolution || 4;
+
+  // Create a temporary canvas for measuring text.
+  const tempCanvas = document.createElement("canvas");
+  const tempContext = tempCanvas.getContext("2d");
+  tempContext.font = `${fontsize}px ${fontface}`;
+
+  // Split the message by spaces.
+  const words = message.split(" ");
+  const lines = [];
+  let currentLine = "";
+
+  words.forEach(word => {
+    // Attempt to add the word to the current line (with a preceding space if needed).
+    const testLine = currentLine ? currentLine + " " + word : word;
+    // If the new line fits within maxWidth, use it.
+    if (tempContext.measureText(testLine).width <= maxWidth) {
+      currentLine = testLine;
+    } else {
+      // The new line is too long.
+      if (currentLine) {
+        // Push the current line into the lines array.
+        lines.push(currentLine);
+        currentLine = "";
+      }
+      // If the word itself is wider than maxWidth, break it up.
+      if (tempContext.measureText(word).width > maxWidth) {
+        let subWord = "";
+        for (let char of word) {
+          const testSubWord = subWord + char;
+          if (tempContext.measureText(testSubWord).width > maxWidth) {
+            // If adding the character exceeds maxWidth, push the segment.
+            if (subWord) {
+              lines.push(subWord);
+            }
+            subWord = char;
+          } else {
+            subWord = testSubWord;
+          }
+        }
+        // Start the new line with the final segment.
+        currentLine = subWord;
+      } else {
+        // The word fits by itself; start a new line with it.
+        currentLine = word;
+      }
+    }
+  });
+  // Push any remaining text.
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+
+  // Debug: log the computed lines
+  console.log("Wrapped lines:", lines);
+
+  // Calculate canvas dimensions.
+  const padding    = 2;
+  const lineHeight = fontsize * 1.2;
+  const canvasWidth  = maxWidth + padding * 2;
+  const canvasHeight = lineHeight * lines.length + padding * 2;
+
+  // Create the canvas using high-resolution support.
+  const canvas = document.createElement("canvas");
+  canvas.width  = canvasWidth * resolution;
+  canvas.height = canvasHeight * resolution;
+  const context = canvas.getContext("2d");
+  context.scale(resolution, resolution);
+  context.clearRect(0, 0, canvasWidth, canvasHeight);
+
+  // Set text properties.
+  context.font = `${fontsize}px ${fontface}`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillStyle = `rgba(${textColor.r}, ${textColor.g}, ${textColor.b}, ${textColor.a})`;
+
+  // Draw each line.
+  lines.forEach((line, index) => {
+    const y = padding + lineHeight / 2 + index * lineHeight;
+    context.fillText(line, canvasWidth / 2, y);
+  });
+
+  // Create the texture and sprite.
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.format = THREE.RGBAFormat;
+  texture.needsUpdate = true;
+  texture.premultiplyAlpha = false;
+
+  const spriteMaterial = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    alphaTest: 0.01
+  });
+
+  const sprite = new THREE.Sprite(spriteMaterial);
+  const scaleFactor = parameters.scaleFactor || 0.1;
+  sprite.scale.set(canvasWidth * scaleFactor, canvasHeight * scaleFactor, 1);
+  return sprite;
+}
+
+
+
+    /**********************************************************************
+     * Create an Animated Logo with a Bottom Label and a Side Text Box.
+     *
+     * Now accepts a third parameter for the side text.
+     **********************************************************************/
+    function createAnimatedLogo(texturePath, labelText, sideText = "", logoOptions = {}, animationConfig = {}, labelOptions = {}) {
+      const logo = createStackedLogo(texturePath, logoOptions);
+      // Create bottom label.
+      const labelSprite = createTextSprite(labelText, labelOptions);
+      const offsetY = (logoOptions.baseSize ? logoOptions.baseSize / 2 : 1.5) + 1.5;
+      labelSprite.position.set(0, -offsetY, 0);
+      logo.add(labelSprite);
+      
+      // Create side text box if sideText is provided.
+      if (sideText && sideText.trim().length > 0) {
+        const sideTextSprite = createWrappedTextSprite(sideText, labelOptions);
+        const offsetX = (logoOptions.baseSize ? logoOptions.baseSize / 2 : 1.5) + 5.5;
+        const offsetY = (logoOptions.baseSize ? logoOptions.baseSize / 2 : 1.5) + 0.1;
+        sideTextSprite.position.set(offsetX, -offsetY, 0);
+        logo.add(sideTextSprite);
+      }
+      
+      const animCfg = Object.assign({}, defaultLogoAnimation, animationConfig);
+      return { group: logo, animation: animCfg };
+    }
+
+    /**********************************************************************
+     * Update Animated Logos.
+     *
+     * For each registered animated logo, update its vertical position and
+     * opacity based on its animation configuration.
+     **********************************************************************/
+    function updateAnimatedLogos() {
+      const currentTime = clock.getElapsedTime();
+      animatedLogos.forEach(item => {
+        const { group, animation } = item;
+        const { cycleTime, startY, endY, fadeInFraction, fadeOutFraction, offset } = animation;
+        const t = (currentTime + offset) % cycleTime;
+        const progress = t / cycleTime;
+        const y = startY + progress * (endY - startY);
+        let opacity;
+        if (progress < fadeInFraction) {
+          opacity = progress / fadeInFraction;
+        } else if (progress > fadeOutFraction) {
+          opacity = (1 - progress) / (1 - fadeOutFraction);
+        } else {
+          opacity = 1;
+        }
+        group.position.y = y;
+        group.traverse(child => {
+          if(child.material) {
+            child.material.opacity = opacity;
+            child.material.needsUpdate = true;
+          }
+        });
+      });
+    }
+
+    /**********************************************************************
+     * Basic Interaction Handlers.
+     **********************************************************************/
+    function onDocumentClick(event) {
+      event.preventDefault();
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    }
+    function onDocumentTouchStart(event) {
+      const touch = event.touches[0];
+      mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+    }
+    function onDocumentMouseMove(event) {
+      event.preventDefault();
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    }
+
+    /**********************************************************************
+     * Animation Loop.
+     **********************************************************************/
+    function animate() {
+      requestAnimationFrame(animate);
+      const delta = clock.getDelta();
+      const elapsed = clock.getElapsedTime();
+
+      // Particle expansion.
+      if (elapsed < params.expansionDuration) {
+        const positions = particleGeometry.attributes.position.array;
+        for (let i = 0; i < params.particleCount; i++) {
+          const index = i * 3;
+          positions[index]     += velocities[index]     * params.expansionSpeed * delta;
+          positions[index + 1] += velocities[index + 1] * params.expansionSpeed * delta;
+          positions[index + 2] += velocities[index + 2] * params.expansionSpeed * delta;
+        }
+        particleGeometry.attributes.position.needsUpdate = true;
+      } else {
+        particleSystem.rotation.y += params.starRotationSpeed * delta;
+      }
+
+      updateAnimatedLogos();
+
+      controls.update();
+      composer.render();
+    }
+
+    /**********************************************************************
+     * Handle Window Resize.
+     **********************************************************************/
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      composer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    init();
+    animate();
+  </script>
+</body>
+</html>

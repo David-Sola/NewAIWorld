@@ -32,17 +32,18 @@
      * Simulation Parameters – adjustable via dat.GUI.
      **********************************************************************/
     const params = {
-      expansionSpeed: 50.0,       // Particle expansion speed.
-      particleCount: 3500,        // Total number of particles.
-      autoZoom: false,            // Auto zoom disabled.
-      zoomSpeed: 0,               // Zoom speed is 0.
-      expansionDuration: 1.5,    // Seconds until expansion stops.
-      starRotationSpeed: 0.05,    // Rotation speed (radians per second) after expansion.
-      backgroundURL: "BackgroundEnhanced.jpg", // Example using forward slashes
-      starIntensity: 20.0,        // Multiplier for star brightness.
-      hoverThreshold: 1000,       // Hover threshold in screen pixels.
-      starSize: 2,                // Initial star size (in pixels).
-      hoverStarSize: 6            // Star size when hovered (doubled).
+      expansionSpeed: 50.0,        // Particle expansion speed.
+      particleCount: 3500,         // Total number of particles.
+      autoZoom: false,             // Auto zoom disabled.
+      zoomSpeed: 0,                // Zoom speed is 0.
+      expansionDuration: 1.5,      // Seconds until expansion stops.
+      starRotationSpeed: 0.05,     // Rotation speed (radians per second) after expansion.
+      backgroundURL: "/wp-content/Images/BackgroundEnhanced.jpg",
+      starIntensity: 400.0,        // Multiplier for star brightness.
+      hoverThreshold: 1000,        // Hover threshold in screen pixels.
+      starSize: 3,                 // Initial star size (in pixels).
+      hoverStarSize: 6,            // Star size when hovered (doubled).
+      showGUI: false               // Hide GUI by default.
     };
 
     /**********************************************************************
@@ -66,6 +67,8 @@
     let velocities;  // Array of velocities for each star.
     let clock, gui;
     let googleLogoGroup, openaiStackedGroup, xStackedGroup, bgStackedGroup;
+    // Group for all objects that should implode (stars and logos)
+    let animGroup;
     let currentHoveredIndex = -1;  // Index of the currently hovered star.
     const mouse = new THREE.Vector2();  // Global mouse coordinates (in NDC).
 
@@ -116,6 +119,10 @@
       renderer.shadowMap.enabled = true;
       document.body.appendChild(renderer.domElement);
 
+      // Create a group for the stars and logos (to be animated on click).
+      animGroup = new THREE.Group();
+      scene.add(animGroup);
+
       // OrbitControls.
       controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
@@ -132,7 +139,7 @@
       // Clock.
       clock = new THREE.Clock();
 
-      // Build the particle system.
+      // Build the particle system and add it to animGroup.
       createParticleSystem();
 
       // Postprocessing (bloom effect).
@@ -141,26 +148,26 @@
       const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
       composer.addPass(bloomPass);
 
-      // Create logos.
+      // Create logos and add them to animGroup.
       googleLogoGroup = createGoogleLogo();
       googleLogoGroup.scale.set(0.3, 0.3, 0.3);
       googleLogoGroup.position.set(-7, -7, -7);
-      scene.add(googleLogoGroup);
+      animGroup.add(googleLogoGroup);
 
       openaiStackedGroup = createOpenAIStackedLogo();
       openaiStackedGroup.scale.set(0.3, 0.3, 0.3);
       openaiStackedGroup.position.set(7, 7, 7);
-      scene.add(openaiStackedGroup);
+      animGroup.add(openaiStackedGroup);
 
       xStackedGroup = createXStackedLogo();
       xStackedGroup.position.set(0, 0, 0);
-      scene.add(xStackedGroup);
+      animGroup.add(xStackedGroup);
 
       bgStackedGroup = createBGStackedLogo();
       bgStackedGroup.position.set(-3, -3, 5);
-      scene.add(bgStackedGroup);
+      animGroup.add(bgStackedGroup);
 
-      // dat.GUI.
+      // dat.GUI setup.
       gui = new GUI();
       gui.add(params, 'expansionSpeed', 0, 200).name("Expansion Speed");
       gui.add(params, 'expansionDuration', 0, 60).name("Expansion Duration (s)");
@@ -173,13 +180,23 @@
       gui.add(params, 'zoomSpeed', 0, 20).name("Zoom Speed");
       gui.add(params, 'backgroundURL').name("Background URL").onFinishChange(loadBackgroundImage);
 
-      // **IMPORTANT**: Call loadBackgroundImage with the current param
-      // so you actually see your background from the start.
+      // Hide the GUI by default if showGUI is false.
+      if (!params.showGUI) {
+        gui.hide();
+      }
+
+      // **IMPORTANT**: Call loadBackgroundImage with the current param so you see your background.
       loadBackgroundImage(params.backgroundURL);
 
       // Event listeners.
       window.addEventListener('resize', onWindowResize, false);
+
+      // For desktops: clicking.
       renderer.domElement.addEventListener('click', onDocumentClick, false);
+
+      // For smartphones: touching (preventDefault omitted for iOS Safari compatibility).
+      renderer.domElement.addEventListener('touchstart', onDocumentTouchStart, false);
+
       renderer.domElement.addEventListener('mousemove', onDocumentMouseMove, false);
     }
 
@@ -232,7 +249,8 @@
       });
 
       particleSystem = new THREE.Points(particleGeometry, shaderMaterial);
-      scene.add(particleSystem);
+      // Add the particle system to the animation group.
+      animGroup.add(particleSystem);
     }
 
     /**********************************************************************
@@ -310,7 +328,7 @@
     }
 
     /**********************************************************************
-     * Google Logo Construction (unchanged)
+     * Google Logo Construction
      **********************************************************************/
     function createRingSegment(startAngle, endAngle, color) {
       const material = new THREE.MeshPhongMaterial({ color: color, side: THREE.DoubleSide });
@@ -358,7 +376,7 @@
       const group = new THREE.Group();
       const loader = new THREE.TextureLoader();
 
-      // 1) The custom shaders that cut out black.
+      // Custom shaders to remove black.
       const vertexShaderOpenAI = `
         varying vec2 vUv;
         void main() {
@@ -375,16 +393,15 @@
         void main() {
           vec4 texColor = texture2D(map, vUv);
           float dist = distance(texColor.rgb, colorToRemove);
-          if(dist < threshold) discard;  // remove near-black
+          if(dist < threshold) discard;
           gl_FragColor = texColor;
         }
       `;
 
-      // 2) Load your OpenAI logo image (with black background).
+      // Load the OpenAI logo image.
       loader.load(
-        "OpenAI_logo.png",  // Replace with the path/URL to your black-based OpenAI image
+        "/wp-content/Images/OpenAI_Logo.png",
         (texture) => {
-          // We'll create multiple stacked planes, just like for X.
           const numPlanes = 25;
           const zSpacing = 0.005;
           const baseSize = 14; 
@@ -392,14 +409,11 @@
           const alphaStep = 0.0;
 
           for (let i = 0; i < numPlanes; i++) {
-            // Plane geometry
             const planeGeom = new THREE.PlaneGeometry(baseSize, baseSize);
-
-            // ShaderMaterial that discards black pixels.
             const openAIUniforms = {
               map: { value: texture },
               colorToRemove: { value: new THREE.Color(0x000000) },
-              threshold: { value: 0.5 } // tweak as needed
+              threshold: { value: 0.5 }
             };
 
             const planeMat = new THREE.ShaderMaterial({
@@ -413,11 +427,8 @@
             const plane = new THREE.Mesh(planeGeom, planeMat);
             plane.name = "openaiPlane_" + i;
 
-            // optional scale logic for layering
             const scaleFactor = 1 + i * scaleStep;
             plane.scale.set(scaleFactor, scaleFactor, 1);
-
-            // position behind the previous
             plane.position.z = -i * zSpacing;
 
             group.add(plane);
@@ -462,7 +473,7 @@
       `;
 
       loader.load(
-        "X_logo.png",  // replace with the real path/URL
+        "/wp-content/Images/X_logo.png",
         (texture) => {
           const numPlanes = 35;
           const zSpacing = 0.003;
@@ -472,7 +483,6 @@
 
           for (let i = 0; i < numPlanes; i++) {
             const planeGeom = new THREE.PlaneGeometry(baseSize, baseSize);
-
             const xUniforms = {
               map: { value: texture },
               colorToRemove: { value: new THREE.Color(0x000000) },
@@ -515,7 +525,7 @@
       const loader = new THREE.TextureLoader();
 
       loader.load(
-        "BG_1neon.jpg",  // Replace with actual path/URL to your BG image
+        "BG_1neon.jpg",
         (texture) => {
           const numPlanes = 30;
           const zSpacing = 0.01;
@@ -525,7 +535,6 @@
 
           for (let i = 0; i < numPlanes; i++) {
             const planeGeom = new THREE.PlaneGeometry(baseSize, baseSize);
-
             const opacity = 0.1 - i * alphaStep;
             const planeMat = new THREE.MeshPhongMaterial({
               map: texture,
@@ -554,98 +563,170 @@
     /**********************************************************************
      * Background Image Loader
      **********************************************************************/
-     function loadBackgroundImage(url) {
+    function loadBackgroundImage(url) {
       if (!url) {
-    scene.background = new THREE.Color(0x000000);
-    return;
-  }
-
-  const loader = new THREE.TextureLoader();
-  loader.load(
-    url,
-    function(texture) {
-      // Improve texture quality
-      texture.anisotropy = 16;
-      texture.encoding = THREE.sRGBEncoding;
-      texture.magFilter = THREE.LinearFilter;
-      texture.minFilter = THREE.LinearMipmapLinearFilter;
-
-      // Create a large sphere. Adjust the radius and segmentation for your needs.
-      const radius = 1000; // Make sure this is larger than your camera's position
-      const widthSegments = 60;
-      const heightSegments = 40;
-      const geometry = new THREE.SphereGeometry(radius, widthSegments, heightSegments);
-
-      // Create the material with the texture and render the inside of the sphere
-      const material = new THREE.MeshBasicMaterial({
-        map: texture,
-        side: THREE.BackSide, // Render inside of the sphere
-        transparent: true, 
-        opacity: 0.05,
-      });
-
-      const sphereMesh = new THREE.Mesh(geometry, material);
-      scene.add(sphereMesh);
-    },
-    undefined,
-    function(err) {
-      console.error("Error loading spherical background image:", err);
-      scene.background = new THREE.Color(0x000000);
-    }
-  );
-}
-
-
-    /**********************************************************************
-     * Click Detection: Open Website on Logo Click
-     **********************************************************************/
-    function onDocumentClick(event) {
-      event.preventDefault();
-      const raycasterLogos = new THREE.Raycaster();
-      raycasterLogos.setFromCamera(mouse, camera);
-
-      // Check Google
-      const intersectsGoogle = raycasterLogos.intersectObjects(googleLogoGroup.children, true);
-      if (intersectsGoogle.length > 0) {
-        window.open("https://www.google.com", "_blank");
+        scene.background = new THREE.Color(0x000000);
         return;
       }
 
-      // Check stacked OpenAI
-      if (openaiStackedGroup) {
+      const loader = new THREE.TextureLoader();
+      loader.load(
+        url,
+        function(texture) {
+          // Improve texture quality.
+          texture.anisotropy = 16;
+          texture.encoding = THREE.sRGBEncoding;
+          texture.magFilter = THREE.LinearFilter;
+          texture.minFilter = THREE.LinearMipmapLinearFilter;
+
+          // Create a large sphere. (This sphere is added directly to the scene.)
+          const radius = 1000;
+          const widthSegments = 60;
+          const heightSegments = 40;
+          const geometry = new THREE.SphereGeometry(radius, widthSegments, heightSegments);
+
+          const material = new THREE.MeshBasicMaterial({
+            map: texture,
+            side: THREE.BackSide,
+            transparent: true, 
+            opacity: 0.3,
+          });
+
+          const sphereMesh = new THREE.Mesh(geometry, material);
+          scene.add(sphereMesh);
+        },
+        undefined,
+        function(err) {
+          console.error("Error loading spherical background image:", err);
+          scene.background = new THREE.Color(0x000000);
+        }
+      );
+    }
+
+    /**********************************************************************
+     * Helper: Intersection Checking (used by both click & touch)
+     **********************************************************************/
+    function checkIntersects() {
+      const raycasterLogos = new THREE.Raycaster();
+      raycasterLogos.setFromCamera(mouse, camera);
+      
+      // Instead of immediately opening the URL, store it in a variable.
+      let url = null;
+
+      // Check Google logo.
+      const intersectsGoogle = raycasterLogos.intersectObjects(googleLogoGroup.children, true);
+      if (intersectsGoogle.length > 0) {
+        url = "https://www.google.com";
+      }
+
+      // Check stacked OpenAI logo.
+      if (!url && openaiStackedGroup) {
         const intersectsOpenAI = raycasterLogos.intersectObjects(openaiStackedGroup.children, true);
         if (intersectsOpenAI.length > 0) {
-          window.open("https://www.openai.com", "_blank");
-          return;
+          url = "https://www.openai.com";
         }
       }
 
-      // Check stacked X
-      if (xStackedGroup) {
+      // Check stacked X logo.
+      if (!url && xStackedGroup) {
         const intersectsX = raycasterLogos.intersectObjects(xStackedGroup.children, true);
         if (intersectsX.length > 0) {
-          window.open("https://x.com", "_blank");
-          return;
+          url = "https://x.com";
         }
       }
 
-      // Check stacked BG
-      if (bgStackedGroup) {
+      // Check stacked BG logo.
+      if (!url && bgStackedGroup) {
         const intersectsBG = raycasterLogos.intersectObjects(bgStackedGroup.children, true);
         if (intersectsBG.length > 0) {
-          window.open("https://example.com/bg-neon", "_blank");
-          return;
+          url = "https://example.com/bg-neon";
         }
+      }
+
+      if (url) {
+        animateImplodeAndRedirect(url);
       }
     }
 
     /**********************************************************************
-     * Mouse Move: Update Global Mouse Coordinates
+     * Click Detection: Open Website on Logo (desktop)
+     **********************************************************************/
+    function onDocumentClick(event) {
+      event.preventDefault();
+      // Update mouse coordinates.
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      checkIntersects();
+    }
+
+    /**********************************************************************
+     * Touch Detection: Open Website on Logo (mobile)
+     **********************************************************************/
+    function onDocumentTouchStart(event) {
+      // For a single touch (preventDefault omitted for iOS Safari compatibility).
+      const touch = event.touches[0];
+      mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+      checkIntersects();
+    }
+
+    /**********************************************************************
+     * Mouse Move: Update Global Mouse Coordinates (for hover effect)
      **********************************************************************/
     function onDocumentMouseMove(event) {
       event.preventDefault();
       mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-      mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    }
+
+    /**********************************************************************
+     * Implode Animation, Camera Zoom, and Redirect Function
+     *
+     * This function now animates:
+     *  - The scale of animGroup (shrinking it to 0).
+     *  - The camera's z-position (moving it closer to the center).
+     *  - The camera's field-of-view (FOV) to enhance the zoom effect.
+     *
+     * Once the animation completes, the page is redirected.
+     **********************************************************************/
+    function animateImplodeAndRedirect(url) {
+      const duration = 1500; // Duration in milliseconds.
+      const startTime = performance.now();
+      const initialCameraZ = camera.position.z;
+      // New: final camera position to zoom in closer to the center.
+      const finalCameraZ = 15; // Adjust this value as needed.
+
+      // New: Animate the field-of-view for an extra zoom effect.
+      const initialFov = camera.fov;
+      const finalFov = 15; // A lower FOV will appear more “zoomed in.”
+
+      // Optionally disable the controls so the camera movement isn’t interfered with.
+      controls.enabled = false;
+
+      function tween() {
+        const now = performance.now();
+        let t = (now - startTime) / duration;
+        if (t > 1) t = 1;
+        // Ease-out cubic function.
+        const ease = 1 - Math.pow(1 - t, 3);
+
+        // Animate the implosion by scaling the group.
+        animGroup.scale.set(1 - ease, 1 - ease, 1 - ease);
+        // Animate camera's z-position from its initial value to the final value.
+        camera.position.z = initialCameraZ - ease * (initialCameraZ - finalCameraZ);
+        // Animate camera's field-of-view for a zoom effect.
+        camera.fov = initialFov - ease * (initialFov - finalFov);
+        camera.updateProjectionMatrix();
+
+        // Ensure the camera continues looking at the center.
+        camera.lookAt(0, 0, 0);
+        if (t < 1) {
+          requestAnimationFrame(tween);
+        } else {
+          window.location.href = url;
+        }
+      }
+      tween();
     }
 
     /**********************************************************************
@@ -667,20 +748,20 @@
         }
         particleGeometry.attributes.position.needsUpdate = true;
       } else {
-        // Once expansion stops, rotate the particle system slowly.
+        // After expansion, slowly rotate the star field.
         particleSystem.rotation.y += params.starRotationSpeed * delta;
       }
 
-      // Custom hover effect (for the stars).
+      // Custom hover effect for the stars.
       const hoveredIndex = checkHover();
       updateStarAttributes(hoveredIndex);
 
-      // Auto Zoom
+      // Auto Zoom.
       if (params.autoZoom) {
         camera.position.z += params.zoomSpeed * delta;
       }
 
-      // Rotate the logos slowly
+      // Slowly rotate the logos.
       if (googleLogoGroup)     googleLogoGroup.rotation.y     += 0.01;
       if (openaiStackedGroup)  openaiStackedGroup.rotation.y  += 0.01;
       if (xStackedGroup)       xStackedGroup.rotation.y       += 0.01;
